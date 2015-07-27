@@ -26,8 +26,41 @@ iconX2Url: "https://ds78apnml6was.cloudfront.net/device/blu.svg"
 }
 
 preferences {
+  page(name: "Credentials", title: "Authentication", content: "authPage", nextPage: "welcomePage", install: false)
   page(name: "welcomePage", nextPage: "actionPage")
   page(name: "actionPage")
+}
+
+mappings {
+  path("/receiveToken") {
+    action: [
+    POST: "receiveToken",
+    GET: "receiveToken"
+    ]
+  }
+}
+
+def authPage() {
+  if(!state.sampleAccessToken) {
+    createAccessToken()
+  }
+}
+
+def createAccessToken() {
+  state.oauthInitState = UUID.randomUUID().toString()
+  def oauthParams = [
+  response_type: "code",
+  client_id: "d2336830-6d7b-4325-bf79-391c5d4c270e",
+  redirect_uri: "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveToken"
+  ]
+  def redirectUrl = "https://oauth.octoblu.com/authorize?"+ toQueryString(oauthParams)
+
+  return dynamicPage(name: "Credentials", title: "Octoblu Authentication", nextPage:"welcomePage", uninstall: uninstallOption, install:false) {
+    section {
+      log.debug "url: ${redirectUrl}"
+      href url:redirectUrl, style:"embedded", required:false, description:"Click to enter Octoblu Credentials."
+    }
+  }
 }
 
 def welcomePage() {
@@ -105,6 +138,35 @@ def actionPage() {
         paragraph title: "i really promise to try harder next time", "please ignore the big red button"
       }
     }
+  }
+}
+
+def receiveToken() {
+  state.sampleAccessToken = params.access_token
+  state.sampleRefreshToken = params.refresh_token
+  render contentType: 'text/html', data: "<html><body>Saved. Now click 'Done' to finish setup.</body></html>"
+}
+
+private refreshAuthToken() {
+  def refreshParams = [
+  method: 'POST',
+  uri: "https://api.thirdpartysite.com",
+  path: "/token",
+  query: [grant_type:'refresh_token', code:"${state.sampleRefreshToken}", client_id:"d2336830-6d7b-4325-bf79-391c5d4c270e"]
+  ]
+  try{
+    def jsonMap
+    httpPost(refreshParams) { resp ->
+      if(resp.status == 200)
+      {
+        jsonMap = resp.data
+        if (resp.data) {
+          state.sampleRefreshToken = resp?.data?.refresh_token
+          state.sampleAccessToken = resp?.data?.access_token
+        }
+      }
+    }
+  } catch(e) {
   }
 }
 
