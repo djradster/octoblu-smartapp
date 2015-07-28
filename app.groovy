@@ -41,24 +41,24 @@ mappings {
 }
 
 def authPage() {
-  if(!state.sampleAccessToken) {
-    createAccessToken()
-  }
-}
-
-def createAccessToken() {
-  state.oauthInitState = UUID.randomUUID().toString()
+  // if(!state.accessToken) {
+  //   state.accessToken = createAccessToken()
+  // }
   def oauthParams = [
   response_type: "code",
   client_id: "d2336830-6d7b-4325-bf79-391c5d4c270e",
-  redirect_uri: "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveToken"
+  redirect_uri: "https://graph.api.smartthings.com/api/smartapps/installations/${app.id}/receiveToken"
   ]
   def redirectUrl = "https://oauth.octoblu.com/authorize?"+ toQueryString(oauthParams)
 
   return dynamicPage(name: "Credentials", title: "Octoblu Authentication", nextPage:"welcomePage", uninstall: uninstallOption, install:false) {
     section {
       log.debug "url: ${redirectUrl}"
-      href url:redirectUrl, style:"embedded", required:false, description:"Click to enter Octoblu Credentials."
+      def isRequired = !state.octobluBearerToken
+      if (isRequired) {
+        paragraph title: "Credentials do not exist!", "Please login to Octoblu to complete setup."
+      }
+      href url:redirectUrl, style:"embedded", required: isRequired, description:"Click to enter Octoblu Credentials."
     }
   }
 }
@@ -142,32 +142,9 @@ def actionPage() {
 }
 
 def receiveToken() {
-  state.sampleAccessToken = params.access_token
-  state.sampleRefreshToken = params.refresh_token
-  render contentType: 'text/html', data: "<html><body>Saved. Now click 'Done' to finish setup.</body></html>"
-}
-
-private refreshAuthToken() {
-  def refreshParams = [
-  method: 'POST',
-  uri: "https://api.thirdpartysite.com",
-  path: "/token",
-  query: [grant_type:'refresh_token', code:"${state.sampleRefreshToken}", client_id:"d2336830-6d7b-4325-bf79-391c5d4c270e"]
-  ]
-  try{
-    def jsonMap
-    httpPost(refreshParams) { resp ->
-      if(resp.status == 200)
-      {
-        jsonMap = resp.data
-        if (resp.data) {
-          state.sampleRefreshToken = resp?.data?.refresh_token
-          state.sampleAccessToken = resp?.data?.access_token
-        }
-      }
-    }
-  } catch(e) {
-  }
+  state.octobluBearerToken = params.code
+  log.debug "new bearer token: ${state.octobluBearerToken}"
+  render contentType: 'text/html', data: "<html><body><p/><h2>Received Octoblu Token!</h2><h3>Click 'Done' to finish setup.</h3></body></html>"
 }
 
 def switchesHandler(evt) {
