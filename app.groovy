@@ -26,9 +26,8 @@ iconX2Url: "https://ds78apnml6was.cloudfront.net/device/blu.svg"
 }
 
 preferences {
-  page(name: "Credentials", title: "Authentication", content: "authPage", nextPage: "welcomePage", install: false)
-  page(name: "welcomePage", nextPage: "actionPage")
-  page(name: "actionPage")
+  page(name: "authPage")
+  page(name: "subscribePage")
 }
 
 mappings {
@@ -41,9 +40,10 @@ mappings {
 }
 
 def authPage() {
-  // if(!state.accessToken) {
-  //   state.accessToken = createAccessToken()
-  // }
+  if(!state.accessToken) {
+    state.accessToken = createAccessToken()
+    log.debug "generated access token ${state.accessToken}"
+  }
   def oauthParams = [
   response_type: "code",
   client_id: "d2336830-6d7b-4325-bf79-391c5d4c270e",
@@ -51,91 +51,81 @@ def authPage() {
   ]
   def redirectUrl = "https://oauth.octoblu.com/authorize?"+ toQueryString(oauthParams)
 
-  return dynamicPage(name: "Credentials", title: "Octoblu Authentication", nextPage:"welcomePage", uninstall: uninstallOption, install:false) {
+  def isRequired = !state.octobluBearerToken
+  return dynamicPage(name: "authPage", title: "Octoblu Authentication", nextPage:(isRequired ? null : "subscribePage"), install: isRequired, uninstall: showUninstall) {
     section {
       log.debug "url: ${redirectUrl}"
-      def isRequired = !state.octobluBearerToken
       if (isRequired) {
-        paragraph title: "Credentials do not exist!", "Please login to Octoblu to complete setup."
+        paragraph title: "Token does not exist.", "Please login to Octoblu to complete setup."
+      } else {
+        paragraph title: "Token created.", "Login is not required."
       }
-      href url:redirectUrl, style:"embedded", required: isRequired, description:"Click to enter Octoblu Credentials."
+      href url:redirectUrl, style:"embedded", title: "Login", required: isRequired, description:"Click to fetch Octoblu Token."
     }
-  }
-}
-
-def welcomePage() {
-  dynamicPage(name: "welcomePage", title: "WELCOME") {
     section {
-      input name: "selectedAction", type: "enum", options: ['add things', 'remove things', 'uninstall'], title: "configuration action", description: "", required: true
-    }
-  }
-}
-
-def actionPage() {
-
-  dynamicPage(name: "actionPage", title: selectedAction.toUpperCase(), install: true, uninstall: selectedAction == 'uninstall') {
-    if (selectedAction == 'add things') {
-      section {
-        input name: "selectedCapabilities", type: "enum", title: "capabilities filter",
-        submitOnChange: true, multiple: true, required: false, options:
-        [ "accelerationSensor",
-        "actuator",
-        "alarm",
-        "battery",
-        "beacon",
-        "button",
-        "carbonMonoxideDetector",
-        "colorControl",
-        "configuration",
-        "contactSensor",
-        "doorControl",
-        "energyMeter",
-        "illuminanceMeasurement",
-        "imageCapture",
-        "lock",
-        "mediaController",
-        "momentary",
-        "motionSensor",
-        "musicPlayer",
-        "notification",
-        "polling",
-        "powerMeter",
-        "presenceSensor",
-        "refresh",
-        "relativeHumidityMeasurement",
-        "relaySwitch",
-        "sensor",
-        "signalStrength",
-        "sleepSensor",
-        "smokeDetector",
-        "speechSynthesis",
-        "stepSensor",
-        "switch",
-        "switchLevel",
-        "temperatureMeasurement",
-        "thermostat",
-        "thermostatCoolingSetpoint",
-        "thermostatFanMode",
-        "thermostatHeatingSetpoint",
-        "thermostatMode",
-        "thermostatOperatingState",
-        "thermostatSetpoint",
-        "threeAxis",
-        "tone",
-        "touchSensor",
-        "valve",
-        "waterSensor" ]
-      }
-      section {
-        for (capability in selectedCapabilities) {
-          input name: "capability.${capability}", type: "capability.$capability", title: "$capability things", multiple: true, required: false
-        }
-      }
-    }
-    if (selectedAction == 'uninstall') {
-      section {
+      input name: "showUninstall", type: "bool", title: "uninstall", description: "false", submitOnChange: true
+      if (showUninstall) {
         paragraph title: "so long and thanks for all the fish", "sorry to see me leave ;_;"
         paragraph title: "i really promise to try harder next time", "please ignore the big red button"
+      }
+    }
+  }
+}
+
+def subscribePage() {
+  return dynamicPage(name: "subscribePage", title: "Subscribe to Things", install: true) {
+    section {
+      input name: "selectedCapabilities", type: "enum", title: "capability filter",
+      submitOnChange: true, multiple: true, required: false, options:
+      [ "accelerationSensor",
+      "actuator",
+      "alarm",
+      "battery",
+      "beacon",
+      "button",
+      "carbonMonoxideDetector",
+      "colorControl",
+      "configuration",
+      "contactSensor",
+      "doorControl",
+      "energyMeter",
+      "illuminanceMeasurement",
+      "imageCapture",
+      "lock",
+      "mediaController",
+      "momentary",
+      "motionSensor",
+      "musicPlayer",
+      "notification",
+      "polling",
+      "powerMeter",
+      "presenceSensor",
+      "refresh",
+      "relativeHumidityMeasurement",
+      "relaySwitch",
+      "sensor",
+      "signalStrength",
+      "sleepSensor",
+      "smokeDetector",
+      "speechSynthesis",
+      "stepSensor",
+      "switch",
+      "switchLevel",
+      "temperatureMeasurement",
+      "thermostat",
+      "thermostatCoolingSetpoint",
+      "thermostatFanMode",
+      "thermostatHeatingSetpoint",
+      "thermostatMode",
+      "thermostatOperatingState",
+      "thermostatSetpoint",
+      "threeAxis",
+      "tone",
+      "touchSensor",
+      "valve",
+      "waterSensor" ]
+      for (capability in selectedCapabilities) {
+        input name: "${capability}Capability", type: "capability.$capability", title: "$capability things", multiple: true, required: false
       }
     }
   }
@@ -144,7 +134,7 @@ def actionPage() {
 def receiveToken() {
   state.octobluBearerToken = params.code
   log.debug "new bearer token: ${state.octobluBearerToken}"
-  render contentType: 'text/html', data: "<html><body><p/><h2>Received Octoblu Token!</h2><h3>Click 'Done' to finish setup.</h3></body></html>"
+  render contentType: 'text/html', data: "<html><body><p>&nbsp;</p><h2>Received Octoblu Token!</h2><h3>Click 'Done' to finish setup.</h3></body></html>"
 }
 
 def switchesHandler(evt) {
@@ -226,7 +216,7 @@ def updated() {
   log.debug "Updated with settings: ${settings}"
   if (settings.selectedAction == 'add things') {
     settings.selectedCapabilities.each{ capability ->
-      settings."capability.${capability}".each { thing ->
+      settings."${capability}Capability".each { thing ->
         thing.supportedAttributes.each { attribute ->
           log.debug "subscribe to ${attribute.name}"
           subscribe thing, attribute.name, logger
