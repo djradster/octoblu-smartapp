@@ -79,56 +79,9 @@ def subscribePage() {
   return dynamicPage(name: "subscribePage", title: "Subscribe to Things", nextPage: "devicesPage") {
     section {
       input name: "selectedCapabilities", type: "enum", title: "capability filter",
-      submitOnChange: true, multiple: true, required: false, options:
-      [ "accelerationSensor",
-      "actuator",
-      "alarm",
-      "battery",
-      "beacon",
-      "button",
-      "carbonMonoxideDetector",
-      "colorControl",
-      "configuration",
-      "contactSensor",
-      "doorControl",
-      "energyMeter",
-      "illuminanceMeasurement",
-      "imageCapture",
-      "lock",
-      "mediaController",
-      "momentary",
-      "motionSensor",
-      "musicPlayer",
-      "notification",
-      "polling",
-      "powerMeter",
-      "presenceSensor",
-      "refresh",
-      "relativeHumidityMeasurement",
-      "relaySwitch",
-      "sensor",
-      "signalStrength",
-      "sleepSensor",
-      "smokeDetector",
-      "speechSynthesis",
-      "stepSensor",
-      "switch",
-      "switchLevel",
-      "temperatureMeasurement",
-      "thermostat",
-      "thermostatCoolingSetpoint",
-      "thermostatFanMode",
-      "thermostatHeatingSetpoint",
-      "thermostatMode",
-      "thermostatOperatingState",
-      "thermostatSetpoint",
-      "threeAxis",
-      "tone",
-      "touchSensor",
-      "valve",
-      "waterSensor" ]
+      submitOnChange: true, multiple: true, required: false, options: [ "actuator", "sensor" ]
       for (capability in selectedCapabilities) {
-        input name: "${capability}Capability", type: "capability.$capability", title: "$capability things", multiple: true, required: false
+        input name: "${capability}Capability".toString(), type: "capability.$capability", title: "$capability things", multiple: true, required: false
       }
     }
   }
