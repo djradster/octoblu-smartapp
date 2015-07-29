@@ -4,12 +4,14 @@
 
 import java.text.DecimalFormat
 
-private apiUrl()          { "https://meshblu.octoblu.com/" }
-private getVendorName()   { "Octoblu" }
-private getVendorIcon()   { "https://ds78apnml6was.cloudfront.net/device/blu.svg" }
-private getClientId()     { appSettings.clientId }
-private getClientSecret() { appSettings.clientSecret }
-private getServerUrl()    { appSettings.serverUrl }
+private apiUrl()              { "https://meshblu.octoblu.com/" }
+private getVendorName()       { "Octoblu" }
+private getVendorIcon()       { "https://ds78apnml6was.cloudfront.net/device/blu.svg" }
+private getVendorAuthPath()   { "https://oauth.octoblu.com/authorize" }
+private getVendorTokenPath()  { "https://oauth.octoblu.com/access_token" }
+private getClientId()         { (appSettings.clientId ? appSettings.clientId : "d2336830-6d7b-4325-bf79-391c5d4c270e") }
+private getClientSecret()     { (appSettings.clientSecret ? appSettings.clientSecret : "b4edb065c5ab3b09390e724be6523803dd80290a") }
+private getServerUrl()        { appSettings.serverUrl }
 
 definition(
 name: "Octoblu",
@@ -28,30 +30,31 @@ iconX2Url: "https://ds78apnml6was.cloudfront.net/device/blu.svg"
 preferences {
   page(name: "authPage")
   page(name: "subscribePage")
+  page(name: "devicesPage")
 }
 
 mappings {
-  path("/receiveToken") {
+  path("/receiveCode") {
     action: [
-    POST: "receiveToken",
-    GET: "receiveToken"
+    POST: "receiveCode",
+    GET: "receiveCode"
     ]
   }
 }
 
 def authPage() {
-  if(!state.accessToken) {
-    state.accessToken = createAccessToken()
-    log.debug "generated access token ${state.accessToken}"
+  if(!state.appAccessToken) {
+    state.appAccessToken = createAccessToken()
+    log.debug "generated app access token ${state.appAccessToken}"
   }
   def oauthParams = [
   response_type: "code",
-  client_id: "d2336830-6d7b-4325-bf79-391c5d4c270e",
-  redirect_uri: "https://graph.api.smartthings.com/api/smartapps/installations/${app.id}/receiveToken"
+  client_id: getClientId(),
+  redirect_uri: "https://graph.api.smartthings.com/api/token/${state.appAccessToken}/smartapps/installations/${app.id}/receiveCode"
   ]
-  def redirectUrl = "https://oauth.octoblu.com/authorize?"+ toQueryString(oauthParams)
+  def redirectUrl =  getVendorAuthPath() + '?' + toQueryString(oauthParams)
 
-  def isRequired = !state.octobluBearerToken
+  def isRequired = !state.vendorAccessToken
   return dynamicPage(name: "authPage", title: "Octoblu Authentication", nextPage:(isRequired ? null : "subscribePage"), install: isRequired, uninstall: showUninstall) {
     section {
       log.debug "url: ${redirectUrl}"
@@ -73,7 +76,7 @@ def authPage() {
 }
 
 def subscribePage() {
-  return dynamicPage(name: "subscribePage", title: "Subscribe to Things", install: true) {
+  return dynamicPage(name: "subscribePage", title: "Subscribe to Things", nextPage: "devicesPage") {
     section {
       input name: "selectedCapabilities", type: "enum", title: "capability filter",
       submitOnChange: true, multiple: true, required: false, options:
@@ -131,32 +134,79 @@ def subscribePage() {
   }
 }
 
-def receiveToken() {
-  state.octobluBearerToken = params.code
-  log.debug "new bearer token: ${state.octobluBearerToken}"
-  render contentType: 'text/html', data: "<html><body><p>&nbsp;</p><h2>Received Octoblu Token!</h2><h3>Click 'Done' to finish setup.</h3></body></html>"
+def devicesPage() {
+  def postParams = [
+  uri: apiUrl() + "v2/whoami",
+  headers: ["Authorization": "Bearer ${state.vendorAccessToken}"]]
+
+  log.debug "fetching url ${postParams.uri}"
+  httpGet(postParams) { response ->
+    state.myUUID = response.data.uuid
+    log.debug "my uuid ${state.myUUID}"
+  }
+
+  postParams.uri = apiUrl() + "mydevices"
+  def numDevices
+
+  log.debug "fetching url ${postParams.uri}"
+  httpGet(postParams) { response ->
+    log.debug "devices json ${response.data.devices}"
+    numDevices = response.data.devices.size()
+    response.data.devices.each { device ->
+      log.debug "has device: ${device.uuid} ${device.name} ${device.type}"
+    }
+  }
+
+  return dynamicPage(name: "devicesPage", title: "Devices", install: true) {
+    section {
+      paragraph "number devices: ${numDevices}"
+    }
+  }
 }
 
-def switchesHandler(evt) {
-  log.debug "one of the configured switches changed states"
+def stringFromResponse(response) {
+  def data = ""
+  response.data.each { prop, val ->
+    if (data != "") {
+      data += "&"
+    }
+    data += prop
+    if (val) {
+      data += "=" + val
+    }
+  }
+  return data
 }
 
-/*
-mappings {
-path("/message")	{ action:[ POST: "messageEventHandler"] }
+def receiveCode() {
+
+  def postParams = [
+  uri: getVendorTokenPath(),
+  contentType: "application/x-www-form-urlencoded",
+  body: [
+  client_id: getClientId(),
+  client_secret: getClientSecret(),
+  grant_type: "authorization_code",
+  code: params.code ] ]
+
+  def goodResponse = "<html><body><p>&nbsp;</p><h2>Received Octoblu Token!</h2><h3>Click 'Done' to finish setup.</h3></body></html>"
+  def badResponse = "<html><body><p>&nbsp;</p><h2>Something went wrong...</h2><h3>PANIC!</h3></body></html>"
+  log.debug "posting to ${tokenUrl} with postParams ${postParams}"
+
+  try {
+    httpPost(postParams) { response ->
+      state.vendorAccessToken = new groovy.json.JsonSlurper().parseText(stringFromResponse(response)).access_token
+      log.debug "have octoblu tokens ${state.vendorAccessToken}"
+      render contentType: 'text/html', data: (state.vendorAccessToken ? goodResponse : badResponse)
+    }
+  } catch(e) {
+    log.debug "second leg oauth error ${e}"
+    render contentType: 'text/html', data: badResponse
+  }
 }
-*/
 
 String toQueryString(Map m) {
   return m.collect { k, v -> "${k}=${URLEncoder.encode(v.toString())}" }.sort().join("&")
-}
-
-def buildCallbackUrl(suffix)
-{
-  log.debug "In buildRedirectUrl"
-
-  def serverUrl = getServerUrl()
-  return serverUrl + "/api/token/${state.accessToken}/smartapps/installations/${app.id}" + suffix
 }
 
 def apiGet(String path, Closure callback)
