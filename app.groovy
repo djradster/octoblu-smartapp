@@ -22,8 +22,8 @@ category: "SmartThings Labs",
 iconUrl: "https://ds78apnml6was.cloudfront.net/device/blu.svg",
 iconX2Url: "https://ds78apnml6was.cloudfront.net/device/blu.svg"
 ) {
-  appSetting "uuid"
-  appSetting "token"
+  appSetting "clientId"
+  appSetting "clientSecret"
   appSetting "serverUrl"
 }
 
@@ -98,6 +98,29 @@ def devicesPage() {
     log.debug "my uuid ${state.myUUID}"
   }
 
+  def devMap = [
+    "defaults": [
+      "useStaticMessage": false
+    ],
+    "needsSetup": false,
+    "online": true,
+    "name": "Smartest Thing",
+    "logo": "http://www.smartthings.com/about/media/resources/SmartThings-Ringed-FullColor.png",
+    "owner": "${state.myUUID}",
+    "configureWhitelist": [],
+    "discoverWhitelist": [ "${state.myUUID}" ],
+    "type": "device:smartthing",
+    "meshblu": [
+      "messageHooks": [
+        [
+          "url": "http://requestb.in/1a46rbg1",
+          "method": "POST",
+          "generateAndForwardMeshbluCredentials": false
+        ]
+      ]
+    ]
+  ]
+
   postParams.uri = apiUrl() + "mydevices"
   def numDevices
 
@@ -112,7 +135,8 @@ def devicesPage() {
 
   return dynamicPage(name: "devicesPage", title: "Devices", install: true) {
     section {
-      paragraph "number devices: ${numDevices}"
+      paragraph title: "my uuid:", "${state.myUUID}"
+      paragraph title: "number devices:", "${numDevices}"
     }
   }
 }
@@ -132,7 +156,6 @@ def stringFromResponse(response) {
 }
 
 def receiveCode() {
-
   def postParams = [
   uri: getVendorTokenPath(),
   contentType: "application/x-www-form-urlencoded",
