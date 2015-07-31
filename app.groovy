@@ -43,16 +43,16 @@ mappings {
 }
 
 def authPage() {
-  if(!state.appAccessToken) {
-    state.appAccessToken = createAccessToken()
-    log.debug "generated app access token ${state.appAccessToken}"
-  }
+  state.appAccessToken = createAccessToken()
+  log.debug "generated app access token ${state.appAccessToken}"
+
   def oauthParams = [
   response_type: "code",
   client_id: getClientId(),
   redirect_uri: "https://graph.api.smartthings.com/api/token/${state.appAccessToken}/smartapps/installations/${app.id}/receiveCode"
   ]
   def redirectUrl =  getVendorAuthPath() + '?' + toQueryString(oauthParams)
+  log.debug "tokened redirect_uri = ${oauthParams.redirect_uri}"
 
   def isRequired = !state.vendorAccessToken
   return dynamicPage(name: "authPage", title: "Octoblu Authentication", nextPage:(isRequired ? null : "subscribePage"), install: isRequired, uninstall: showUninstall) {
@@ -87,6 +87,59 @@ def subscribePage() {
   }
 }
 
+def createDevices(smartDevices) {
+  log.debug "called createDevices with ${smartDevices}"
+  smartDevices.each { smartDevice ->
+    log.debug "checking if ${smartDevice.id} needs to be created"
+
+    if (state.octobluDevices[smartDevice.id]) {
+      log.debug "the device ${smartDevice.id} has already been created"
+      return;
+    }
+
+    log.debug "creating device for ${smartDevice.id}"
+
+    def deviceProperties = [
+      "defaults": [
+        "useStaticMessage": false
+      ],
+      "needsSetup": false,
+      "online": true,
+      "name": "${smartDevice.name}",
+      "smartThingId": "${smartDevice.id}",
+      "logo": "http://www.smartthings.com/about/media/resources/SmartThings-Ringed-FullColor.png",
+      "owner": "${state.myUUID}",
+      "configureWhitelist": [],
+      "discoverWhitelist": [ "${state.myUUID}" ],
+      "type": "device:smartthing",
+      "meshblu": [
+        "messageHooks": [
+          [
+            "url": "https://graph.api.smartthings.com/api/token/${state.appAccessToken}/smartapps/installations/${app.id}/message",
+            "method": "POST",
+            "generateAndForwardMeshbluCredentials": false
+          ]
+        ]
+      ]
+    ]
+
+    def postParams = [
+    uri: apiUrl() + "devices",
+    headers: ["Authorization": "Bearer ${state.vendorAccessToken}"],
+    contentType: "application/json",
+    body: deviceProperties ]
+
+    try {
+      httpPost(postParams) { response ->
+        log.debug "here is your dumb device: ${response.data}"
+        state.octobluDevices[smartDevice.id] = response.data
+      }
+    } catch (e) {
+      log.debug "you suck ${e}"
+    }
+  }
+}
+
 def devicesPage() {
   def postParams = [
   uri: apiUrl() + "v2/whoami",
@@ -98,45 +151,33 @@ def devicesPage() {
     log.debug "my uuid ${state.myUUID}"
   }
 
-  def devMap = [
-    "defaults": [
-      "useStaticMessage": false
-    ],
-    "needsSetup": false,
-    "online": true,
-    "name": "Smartest Thing",
-    "logo": "http://www.smartthings.com/about/media/resources/SmartThings-Ringed-FullColor.png",
-    "owner": "${state.myUUID}",
-    "configureWhitelist": [],
-    "discoverWhitelist": [ "${state.myUUID}" ],
-    "type": "device:smartthing",
-    "meshblu": [
-      "messageHooks": [
-        [
-          "url": "http://requestb.in/1a46rbg1",
-          "method": "POST",
-          "generateAndForwardMeshbluCredentials": false
-        ]
-      ]
-    ]
-  ]
-
   postParams.uri = apiUrl() + "mydevices"
   def numDevices
+
+  state.octobluDevices = []
 
   log.debug "fetching url ${postParams.uri}"
   httpGet(postParams) { response ->
     log.debug "devices json ${response.data.devices}"
     numDevices = response.data.devices.size()
     response.data.devices.each { device ->
+      if (device.smartThingsId) {
+        state.octobluDevices[device.smartThingsId] = device
+      }
       log.debug "has device: ${device.uuid} ${device.name} ${device.type}"
     }
+  }
+
+  selectedCapabilities.each { capability ->
+    log.debug "checking devices for capability ${capability}"
+    createDevices(settings["${capability}Capability"])
   }
 
   return dynamicPage(name: "devicesPage", title: "Devices", install: true) {
     section {
       paragraph title: "my uuid:", "${state.myUUID}"
       paragraph title: "number devices:", "${numDevices}"
+      paragraph title: "your smart devices:", "${state.octobluDevices}"
     }
   }
 }
@@ -156,6 +197,10 @@ def stringFromResponse(response) {
 }
 
 def receiveCode() {
+  revokeAccessToken()
+  state.appAccessToken = createAccessToken()
+  log.debug "generated app access token ${state.appAccessToken}"
+
   def postParams = [
   uri: getVendorTokenPath(),
   contentType: "application/x-www-form-urlencoded",
