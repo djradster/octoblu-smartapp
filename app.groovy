@@ -129,6 +129,8 @@ def createDevices(smartDevices) {
     contentType: "application/json",
     body: deviceProperties ]
 
+    log.debug "calling httpPost with params ${postParams}"
+
     try {
       httpPost(postParams) { response ->
         log.debug "here is your dumb device: ${response.data}"
@@ -136,6 +138,7 @@ def createDevices(smartDevices) {
       }
     } catch (e) {
       log.debug "you suck ${e}"
+      log.debug " or maybe ${e.message}"
     }
   }
 }
@@ -154,15 +157,16 @@ def devicesPage() {
   postParams.uri = apiUrl() + "mydevices"
   def numDevices
 
-  state.octobluDevices = []
+  state.octobluDevices = [:]
 
   log.debug "fetching url ${postParams.uri}"
   httpGet(postParams) { response ->
     log.debug "devices json ${response.data.devices}"
     numDevices = response.data.devices.size()
     response.data.devices.each { device ->
-      if (device.smartThingsId) {
-        state.octobluDevices[device.smartThingsId] = device
+      if (device.smartThingId) {
+        log.debug "found device ${device.uuid} with smartThingId ${device.smartThingId}"
+        state.octobluDevices[device.smartThingId] = device
       }
       log.debug "has device: ${device.uuid} ${device.name} ${device.type}"
     }
