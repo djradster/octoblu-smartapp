@@ -87,31 +87,80 @@ def subscribePage() {
   }
 }
 
+def getVendorDeviceStateInfo(device) {
+  return [ "uuid": device.uuid, "token": device.token ]
+}
+
 def createDevices(smartDevices) {
   log.debug "called createDevices with ${smartDevices}"
   smartDevices.each { smartDevice ->
     log.debug "checking if ${smartDevice.id} needs to be created"
 
-    if (state.octobluDevices[smartDevice.id]) {
+    def usesArguments = false
+    def commandInfo = ""
+    def commandArray = [ "_deviceInfo" ]
+
+    smartDevice.supportedCommands.each { command ->
+      commandInfo += "<b>${command.name}<b>( ${command.arguments.join(', ')} )<br/>"
+      commandArray.push(command.name)
+      usesArguments = usesArguments || command.arguments.size()>0
+    }
+
+    // def capabilitiesString = "<b>capabilities:<b><br/>" +
+    // smartDevice.capabilities.each { capability
+    //   capabilitiesString += "<b>${capability.name}</b><br/>"
+    // }
+
+    if (state.vendorDevices[smartDevice.id]) {
       log.debug "the device ${smartDevice.id} has already been created"
       return;
     }
 
     log.debug "creating device for ${smartDevice.id}"
 
+    def messageSchema = [
+      "type": "object",
+      "title": "Command",
+      "properties": [
+        "command": [
+          "type": "string",
+          "enum": commandArray,
+          "default": "_deviceInfo"
+        ]
+      ]
+    ]
+
+    // if (commandArray.size()>1) {
+    //   messageSchema."properties"."delay" = [
+    //     "type": "number",
+    //     "title": "delay (ms)"
+    //   ]
+    // }
+
+    if (usesArguments) {
+      messageSchema."properties"."arguments" = [
+        "type": "array",
+        "description": commandInfo,
+        "readOnly": !usesArguments,
+        "items": [
+          "type": "string",
+          "title": "arg"
+        ]
+      ]
+    }
+
     def deviceProperties = [
-      "defaults": [
-        "useStaticMessage": false
-      ],
+      "messageSchema": messageSchema,
       "needsSetup": false,
       "online": true,
-      "name": "${smartDevice.name}",
-      "smartThingId": "${smartDevice.id}",
-      "logo": "http://www.smartthings.com/about/media/resources/SmartThings-Ringed-FullColor.png",
+      "name": "${smartDevice.displayName}",
+      "smartDeviceId": "${smartDevice.id}",
+      "logo": "https://www.smartthings.com/about/media/resources/SmartThings-Ringed-FullColor.png",
       "owner": "${state.myUUID}",
       "configureWhitelist": [],
       "discoverWhitelist": [ "${state.myUUID}" ],
-      "type": "device:smartthing",
+      "type": "device:${smartDevice.name.replaceAll('\\s','-').toLowerCase()}",
+      "category": "smart-things",
       "meshblu": [
         "messageHooks": [
           [
@@ -126,19 +175,17 @@ def createDevices(smartDevices) {
     def postParams = [
     uri: apiUrl() + "devices",
     headers: ["Authorization": "Bearer ${state.vendorAccessToken}"],
-    contentType: "application/json",
-    body: deviceProperties ]
+    body: groovy.json.JsonOutput.toJson(deviceProperties) ]
 
     log.debug "calling httpPost with params ${postParams}"
 
     try {
-      httpPost(postParams) { response ->
+      httpPostJson(postParams) { response ->
         log.debug "here is your dumb device: ${response.data}"
-        state.octobluDevices[smartDevice.id] = response.data
+        state.vendorDevices[smartDevice.id] = getVendorDeviceStateInfo(response.data)
       }
     } catch (e) {
       log.debug "you suck ${e}"
-      log.debug " or maybe ${e.message}"
     }
   }
 }
@@ -149,27 +196,35 @@ def devicesPage() {
   headers: ["Authorization": "Bearer ${state.vendorAccessToken}"]]
 
   log.debug "fetching url ${postParams.uri}"
-  httpGet(postParams) { response ->
-    state.myUUID = response.data.uuid
-    log.debug "my uuid ${state.myUUID}"
+  try {
+    httpGet(postParams) { response ->
+      state.myUUID = response.data.uuid
+      log.debug "my uuid ${state.myUUID}"
+    }
+  } catch (e) {
+    log.debug "whoami error ${e}"
   }
 
   postParams.uri = apiUrl() + "mydevices"
   def numDevices
 
-  state.octobluDevices = [:]
+  state.vendorDevices = [:]
 
   log.debug "fetching url ${postParams.uri}"
-  httpGet(postParams) { response ->
-    log.debug "devices json ${response.data.devices}"
-    numDevices = response.data.devices.size()
-    response.data.devices.each { device ->
-      if (device.smartThingId) {
-        log.debug "found device ${device.uuid} with smartThingId ${device.smartThingId}"
-        state.octobluDevices[device.smartThingId] = device
+  try {
+    httpGet(postParams) { response ->
+      log.debug "devices json ${response.data.devices}"
+      numDevices = response.data.devices.size()
+      response.data.devices.each { device ->
+        if (device.smartDeviceId) {
+          log.debug "found device ${device.uuid} with smartDeviceId ${device.smartDeviceId}"
+          state.vendorDevices[device.smartDeviceId] = getVendorDeviceStateInfo(device)
+        }
+        log.debug "has device: ${device.uuid} ${device.name} ${device.type}"
       }
-      log.debug "has device: ${device.uuid} ${device.name} ${device.type}"
     }
+  } catch (e) {
+    log.debug "devices error ${e}"
   }
 
   selectedCapabilities.each { capability ->
@@ -181,33 +236,18 @@ def devicesPage() {
     section {
       paragraph title: "my uuid:", "${state.myUUID}"
       paragraph title: "number devices:", "${numDevices}"
-      paragraph title: "your smart devices:", "${state.octobluDevices}"
+      paragraph title: "your smart devices:", "${state.vendorDevices}"
     }
   }
-}
-
-def stringFromResponse(response) {
-  def data = ""
-  response.data.each { prop, val ->
-    if (data != "") {
-      data += "&"
-    }
-    data += prop
-    if (val) {
-      data += "=" + val
-    }
-  }
-  return data
 }
 
 def receiveCode() {
-  revokeAccessToken()
-  state.appAccessToken = createAccessToken()
+  // revokeAccessToken()
+  // state.appAccessToken = createAccessToken()
   log.debug "generated app access token ${state.appAccessToken}"
 
   def postParams = [
   uri: getVendorTokenPath(),
-  contentType: "application/x-www-form-urlencoded",
   body: [
   client_id: getClientId(),
   client_secret: getClientSecret(),
@@ -216,11 +256,12 @@ def receiveCode() {
 
   def goodResponse = "<html><body><p>&nbsp;</p><h2>Received Octoblu Token!</h2><h3>Click 'Done' to finish setup.</h3></body></html>"
   def badResponse = "<html><body><p>&nbsp;</p><h2>Something went wrong...</h2><h3>PANIC!</h3></body></html>"
-  log.debug "posting to ${tokenUrl} with postParams ${postParams}"
+  log.debug "authorizeToken with postParams ${postParams}"
 
   try {
     httpPost(postParams) { response ->
-      state.vendorAccessToken = new groovy.json.JsonSlurper().parseText(stringFromResponse(response)).access_token
+      log.debug "response: ${response.data}"
+      state.vendorAccessToken = response.data.access_token
       log.debug "have octoblu tokens ${state.vendorAccessToken}"
       render contentType: 'text/html', data: (state.vendorAccessToken ? goodResponse : badResponse)
     }
