@@ -6,7 +6,7 @@ import java.text.DecimalFormat
 
 private apiUrl()              { "https://meshblu.octoblu.com/" }
 private getVendorName()       { "Octoblu" }
-private getVendorIcon()       { "https://ds78apnml6was.cloudfront.net/device/blu.svg" }
+private getVendorIcon()       { "https://s3-us-west-2.amazonaws.com/octoblu-logos/octoblu-color.png" }
 private getVendorAuthPath()   { "https://oauth.octoblu.com/authorize" }
 private getVendorTokenPath()  { "https://oauth.octoblu.com/access_token" }
 private getClientId()         { (appSettings.clientId ?: "d2336830-6d7b-4325-bf79-391c5d4c270e") }
@@ -19,8 +19,8 @@ namespace: "citrix",
 author: "Octoblu",
 description: "Connect Octoblu to SmartThings.",
 category: "SmartThings Labs",
-iconUrl: "https://ds78apnml6was.cloudfront.net/device/blu.svg",
-iconX2Url: "https://ds78apnml6was.cloudfront.net/device/blu.svg"
+iconUrl: "https://s3-us-west-2.amazonaws.com/octoblu-logos/octoblu-color.png",
+iconX2Url: "https://s3-us-west-2.amazonaws.com/octoblu-logos/octoblu-color.png"
 ) {
   appSetting "clientId"
   appSetting "clientSecret"
@@ -347,8 +347,8 @@ def installed() {
   log.debug "Installed with settings: ${settings}"
 }
 
-def logger(evt) {
-  def eventData = [ "devices" : "*", "payload" : [
+def getEventData(evt) {
+  return [
   "id" : evt.id,
   "name" : evt.name,
   "value" : evt.value,
@@ -370,7 +370,11 @@ def logger(evt) {
   "unit" : evt.unit,
   "category" : "event",
   "type" : "device:smart-thing"
-  ]]
+  ]
+}
+
+def logger(evt) {
+  def eventData = [ "devices" : "*", "payload" : getEventData(evt) ]
 
   log.debug "sending event: ${groovy.json.JsonOutput.toJson(eventData)}"
 
@@ -398,6 +402,82 @@ def logger(evt) {
 
 def receiveMessage() {
   log.debug("received data ${request.JSON}")
+  def foundDevice = false
+  settings.selectedCapabilities.each{ capability ->
+    settings."${capability}Capability".each { thing ->
+      if (!foundDevice && thing.id == request.JSON.payload.smartDeviceId) {
+        foundDevice = true
+        if (!request.JSON.payload.command.startsWith(".")) {
+          def args = (request.JSON.payload.arguments ?: [])
+          thing."${request.JSON.payload.command}"(*args)
+        } else {
+          log.debug "calling internal command ${request.JSON.payload.command}"
+          def commandData = [:]
+          switch (request.JSON.payload.command) {
+            case ".value":
+              log.debug "got command .value"
+              thing.supportedAttributes.each { attribute ->
+                commandData[attribute.name] = thing.latestValue(attribute.name)
+              }
+              break
+            case ".state":
+              log.debug "got command .state"
+              thing.supportedAttributes.each { attribute ->
+                commandData[attribute.name] = thing.latestState(attribute.name)?.value
+              }
+              break
+            case ".device":
+              log.debug "got command .device"
+              commandData = [
+                "id" : thing.id,
+                "displayName" : thing.displayName,
+                "name" : thing.name,
+                "label" : thing.label,
+                "capabilities" : thing.capabilities.collect{ thingCapability -> return thingCapability.name },
+                "supportedAttributes" : thing.supportedAttributes.collect{ attribute -> return attribute.name },
+                "supportedCommands" : thing.supportedCommands.collect{ command -> return ["name" : command.name, "arguments" : command.arguments ] }
+              ]
+              break
+            case ".events":
+              log.debug "got command .events"
+              commandData.events = []
+              thing.events().each { event ->
+                commandData.events.push(getEventData(event))
+              }
+              break
+            default:
+              commandData.error = "unknown command"
+              log.debug "unknown command ${request.JSON.payload.command}"
+          }
+          commandData.command = request.JSON.payload.command
+
+          log.debug "done switch!"
+
+          def vendorDevice = state.vendorDevices[thing.id]
+          log.debug "with vendorDevice ${vendorDevice} for ${groovy.json.JsonOutput.toJson(commandData)}"
+
+          def postParams = [
+            uri: apiUrl() + "messages",
+            headers: ["meshblu_auth_uuid": vendorDevice.uuid, "meshblu_auth_token": vendorDevice.token],
+            body: groovy.json.JsonOutput.toJson([ "devices" : "*", "payload" : commandData ]) ]
+
+          log.debug "posting params ${postParams}"
+
+          try {
+            log.debug "calling httpPostJson!"
+            httpPostJson(postParams) { response ->
+              log.debug "sent off device event"
+            }
+          } catch (e) {
+            log.debug "you suck ${e}"
+          }
+
+        }
+
+        log.debug "done else"
+      }
+    }
+  }
 }
 
 def updated() {
