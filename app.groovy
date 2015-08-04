@@ -9,8 +9,8 @@ private getVendorName()       { "Octoblu" }
 private getVendorIcon()       { "https://ds78apnml6was.cloudfront.net/device/blu.svg" }
 private getVendorAuthPath()   { "https://oauth.octoblu.com/authorize" }
 private getVendorTokenPath()  { "https://oauth.octoblu.com/access_token" }
-private getClientId()         { (appSettings.clientId ? appSettings.clientId : "d2336830-6d7b-4325-bf79-391c5d4c270e") }
-private getClientSecret()     { (appSettings.clientSecret ? appSettings.clientSecret : "b4edb065c5ab3b09390e724be6523803dd80290a") }
+private getClientId()         { (appSettings.clientId ?: "d2336830-6d7b-4325-bf79-391c5d4c270e") }
+private getClientSecret()     { (appSettings.clientSecret ?: "b4edb065c5ab3b09390e724be6523803dd80290a") }
 private getServerUrl()        { appSettings.serverUrl }
 
 definition(
@@ -91,14 +91,32 @@ def getVendorDeviceStateInfo(device) {
   return [ "uuid": device.uuid, "token": device.token ]
 }
 
+def resetVendorDeviceToken(smartDeviceId) {
+  def deviceUUID = state.vendorDevices[smartDeviceId].uuid
+  if (!deviceUUID) {
+    log.debug "no device uuid in resetVendorDeviceToken?"
+    return
+  }
+  log.debug "getting new token for ${smartDeviceId}/${deviceUUID}"
+  def postParams = [
+  uri: apiUrl() + "devices/${deviceUUID}/token",
+  headers: ["Authorization": "Bearer ${state.vendorAccessToken}"]]
+  try {
+    httpPost(postParams) { response ->
+      state.vendorDevices[smartDeviceId] = getVendorDeviceStateInfo(response.data)
+      log.debug "got new token for ${smartDeviceId}/${deviceUUID}"
+    }
+  } catch (e) {
+    log.debug "you suck ${e}"
+  }
+}
+
 def createDevices(smartDevices) {
-  log.debug "called createDevices with ${smartDevices}"
   smartDevices.each { smartDevice ->
-    log.debug "checking if ${smartDevice.id} needs to be created"
 
     def usesArguments = false
     def commandInfo = ""
-    def commandArray = [ "_deviceInfo" ]
+    def commandArray = [ ".value", ".state", ".device", ".events"]
 
     smartDevice.supportedCommands.each { command ->
       commandInfo += "<b>${command.name}<b>( ${command.arguments.join(', ')} )<br/>"
@@ -111,11 +129,6 @@ def createDevices(smartDevices) {
     //   capabilitiesString += "<b>${capability.name}</b><br/>"
     // }
 
-    if (state.vendorDevices[smartDevice.id]) {
-      log.debug "the device ${smartDevice.id} has already been created"
-      return;
-    }
-
     log.debug "creating device for ${smartDevice.id}"
 
     def messageSchema = [
@@ -125,7 +138,7 @@ def createDevices(smartDevices) {
         "command": [
           "type": "string",
           "enum": commandArray,
-          "default": "_deviceInfo"
+          "default": ".value"
         ]
       ]
     ]
@@ -155,7 +168,7 @@ def createDevices(smartDevices) {
       "online": true,
       "name": "${smartDevice.displayName}",
       "smartDeviceId": "${smartDevice.id}",
-      "logo": "https://www.smartthings.com/about/media/resources/SmartThings-Ringed-FullColor.png",
+      "logo": "https://i.imgur.com/TsXefbK.png",
       "owner": "${state.myUUID}",
       "configureWhitelist": [],
       "discoverWhitelist": [ "${state.myUUID}" ],
@@ -172,18 +185,27 @@ def createDevices(smartDevices) {
       ]
     ]
 
-    def postParams = [
+    def params = [
     uri: apiUrl() + "devices",
     headers: ["Authorization": "Bearer ${state.vendorAccessToken}"],
     body: groovy.json.JsonOutput.toJson(deviceProperties) ]
 
-    log.debug "calling httpPost with params ${postParams}"
-
     try {
-      httpPostJson(postParams) { response ->
-        log.debug "here is your dumb device: ${response.data}"
-        state.vendorDevices[smartDevice.id] = getVendorDeviceStateInfo(response.data)
+
+      if (!state.vendorDevices[smartDevice.id]) {
+        log.debug "creating new device for ${smartDevice.id}"
+        httpPostJson(params) { response ->
+          state.vendorDevices[smartDevice.id] = getVendorDeviceStateInfo(response.data)
+        }
+        return
       }
+
+      params.uri = params.uri + "/${state.vendorDevices[smartDevice.id].uuid}"
+      log.debug "the device ${smartDevice.id} has already been created, updating ${params.uri}"
+      httpPutJson(params) { response ->
+        resetVendorDeviceToken(smartDevice.id);
+      }
+
     } catch (e) {
       log.debug "you suck ${e}"
     }
@@ -203,10 +225,10 @@ def devicesPage() {
     }
   } catch (e) {
     log.debug "whoami error ${e}"
+    return
   }
 
-  postParams.uri = apiUrl() + "mydevices"
-  def numDevices
+  postParams.uri = apiUrl() + "devices?owner=${state.myUUID}&category=smart-things"
 
   state.vendorDevices = [:]
 
@@ -214,7 +236,6 @@ def devicesPage() {
   try {
     httpGet(postParams) { response ->
       log.debug "devices json ${response.data.devices}"
-      numDevices = response.data.devices.size()
       response.data.devices.each { device ->
         if (device.smartDeviceId) {
           log.debug "found device ${device.uuid} with smartDeviceId ${device.smartDeviceId}"
@@ -225,6 +246,7 @@ def devicesPage() {
     }
   } catch (e) {
     log.debug "devices error ${e}"
+    return
   }
 
   selectedCapabilities.each { capability ->
@@ -232,11 +254,13 @@ def devicesPage() {
     createDevices(settings["${capability}Capability"])
   }
 
+  def devInfo = state.vendorDevices.collect { k, v -> "${k}: ${v.uuid}/ ${v.token} " }.sort().join("\n")
+
   return dynamicPage(name: "devicesPage", title: "Devices", install: true) {
     section {
       paragraph title: "my uuid:", "${state.myUUID}"
-      paragraph title: "number devices:", "${numDevices}"
-      paragraph title: "your smart devices:", "${state.vendorDevices}"
+      paragraph title: "number of smart devices:", "${state.vendorDevices.size()}"
+      paragraph title: "your smart devices:", "${devInfo}"
     }
   }
 }
