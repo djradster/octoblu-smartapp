@@ -36,8 +36,12 @@ preferences {
 mappings {
   path("/receiveCode") {
     action: [
-    POST: "receiveCode",
     GET: "receiveCode"
+    ]
+  }
+  path("/message") {
+    action: [
+    POST: "receiveMessage"
     ]
   }
 }
@@ -135,6 +139,11 @@ def createDevices(smartDevices) {
       "type": "object",
       "title": "Command",
       "properties": [
+        "smartDeviceId" : [
+          "type": "string",
+          "readOnly": true,
+          "default": "${smartDevice.id}"
+        ],
         "command": [
           "type": "string",
           "enum": commandArray,
@@ -171,7 +180,9 @@ def createDevices(smartDevices) {
       "logo": "https://i.imgur.com/TsXefbK.png",
       "owner": "${state.myUUID}",
       "configureWhitelist": [],
-      "discoverWhitelist": [ "${state.myUUID}" ],
+      "discoverWhitelist": ["${state.myUUID}"],
+      "receiveWhitelist": ["*"],
+      "sendWhitelist": ["*"],
       "type": "device:${smartDevice.name.replaceAll('\\s','-').toLowerCase()}",
       "category": "smart-things",
       "meshblu": [
@@ -337,36 +348,77 @@ def installed() {
 }
 
 def logger(evt) {
-  def data = [ "name" : evt.name,
+  def eventData = [ "devices" : "*", "payload" : [
+  "id" : evt.id,
+  "name" : evt.name,
   "value" : evt.value,
+  "deviceId" : evt.deviceId,
+  "hubId" : evt.hubId,
+  "locationId" : evt.locationId,
+  "installedSmartAppId" : evt.installedSmartAppId,
+  "date" : evt.date,
+  "dateValue": evt.dateValue,
+  "isoDate" : evt.isoDate,
+  "isDigital" : evt.isDigital(),
+  "isPhysical" : evt.isPhysical(),
+  "isStateChange" : evt.isStateChange(),
+  "linkText" : evt.linkText,
   "description" : evt.description,
   "descriptionText" : evt.descriptionText,
+  "displayName" : evt.displayName,
   "source" : evt.source,
   "unit" : evt.unit,
-  "deviceId" : evt.deviceId,
-  "displayName" : evt.displayName,
-  "hubId" : evt.hubId,
-  "date" : ( evt.dateValue ? evt.dateValue : evt.date ),
-  "locationId" : evt.locationId ]
-  log.debug "event: ${data}"
+  "category" : "event",
+  "type" : "device:smart-thing"
+  ]]
+
+  log.debug "sending event: ${groovy.json.JsonOutput.toJson(eventData)}"
+
+  def vendorDevice = state.vendorDevices[evt.deviceId]
+  if (!vendorDevice) {
+    log.debug "aborting, vendor device for ${evt.deviceId} doesn't exist?"
+    return
+  }
+
+  log.debug "using device ${vendorDevice}"
+
+  def postParams = [
+  uri: apiUrl() + "messages",
+  headers: ["meshblu_auth_uuid": vendorDevice.uuid, "meshblu_auth_token": vendorDevice.token],
+  body: groovy.json.JsonOutput.toJson(eventData) ]
+
+  try {
+    httpPostJson(postParams) { response ->
+      log.debug "sent off device event"
+    }
+  } catch (e) {
+    log.debug "you suck ${e}"
+  }
+}
+
+def receiveMessage() {
+  log.debug("received data ${request.JSON}")
 }
 
 def updated() {
   unsubscribe()
   log.debug "Updated with settings: ${settings}"
-  if (settings.selectedAction == 'add things') {
-    settings.selectedCapabilities.each{ capability ->
-      settings."${capability}Capability".each { thing ->
-        thing.supportedAttributes.each { attribute ->
-          log.debug "subscribe to ${attribute.name}"
-          subscribe thing, attribute.name, logger
-        }
-        thing.supportedCommands.each { command ->
-          log.debug "subscribe to command ${command.name}"
-          subscribeToCommand thing, command.name, logger
-        }
-        log.debug "subscribed to thing ${thing.id}"
+  def subscribed = [:]
+  settings.selectedCapabilities.each{ capability ->
+    settings."${capability}Capability".each { thing ->
+      if (subscribed[thing.id]) {
+        return
       }
+      subscribed[thing.id] = true
+      thing.supportedAttributes.each { attribute ->
+        log.debug "subscribe to ${attribute.name}"
+        subscribe thing, attribute.name, logger
+      }
+      thing.supportedCommands.each { command ->
+        log.debug "subscribe to command ${command.name}"
+        subscribeToCommand thing, command.name, logger
+      }
+      log.debug "subscribed to thing ${thing.id}"
     }
   }
 }
