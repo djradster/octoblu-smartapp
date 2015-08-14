@@ -1,12 +1,33 @@
 /**
+The MIT License (MIT)
 
+Copyright (c) 2015 Octoblu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 */
 
+import org.apache.commons.codec.binary.Base64
 import java.text.DecimalFormat
 
 private apiUrl()              { "https://meshblu.octoblu.com/" }
 private getVendorName()       { "Octoblu" }
-private getVendorIcon()       { "https://s3-us-west-2.amazonaws.com/octoblu-logos/octoblu-color.png" }
+private getVendorIcon()       { "http://i.imgur.com/BjTfDYk.png" }
 private getVendorAuthPath()   { "https://oauth.octoblu.com/authorize" }
 private getVendorTokenPath()  { "https://oauth.octoblu.com/access_token" }
 private getClientId()         { (appSettings.clientId ?: "d2336830-6d7b-4325-bf79-391c5d4c270e") }
@@ -17,10 +38,10 @@ definition(
 name: "Octoblu",
 namespace: "citrix",
 author: "Octoblu",
-description: "Connect Octoblu to SmartThings.",
+description: "Connect SmartThings devices to Octoblu",
 category: "SmartThings Labs",
-iconUrl: "https://s3-us-west-2.amazonaws.com/octoblu-logos/octoblu-color.png",
-iconX2Url: "https://s3-us-west-2.amazonaws.com/octoblu-logos/octoblu-color.png"
+iconUrl: "http://i.imgur.com/BjTfDYk.png",
+iconX2Url: "http://i.imgur.com/BjTfDYk.png"
 ) {
   appSetting "clientId"
   appSetting "clientSecret"
@@ -47,13 +68,13 @@ mappings {
 }
 
 def authPage() {
-  state.appAccessToken = createAccessToken()
-  log.debug "generated app access token ${state.appAccessToken}"
+  state.accessToken = createAccessToken()
+  log.debug "generated app access token ${state.accessToken}"
 
   def oauthParams = [
   response_type: "code",
   client_id: getClientId(),
-  redirect_uri: "https://graph.api.smartthings.com/api/token/${state.appAccessToken}/smartapps/installations/${app.id}/receiveCode"
+  redirect_uri: "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveCode"
   ]
   def redirectUrl =  getVendorAuthPath() + '?' + toQueryString(oauthParams)
   log.debug "tokened redirect_uri = ${oauthParams.redirect_uri}"
@@ -111,7 +132,7 @@ def resetVendorDeviceToken(smartDeviceId) {
       log.debug "got new token for ${smartDeviceId}/${deviceUUID}"
     }
   } catch (e) {
-    log.debug "you suck ${e}"
+    log.debug "unable to get new token ${e}"
   }
 }
 
@@ -188,7 +209,7 @@ def createDevices(smartDevices) {
       "meshblu": [
         "messageHooks": [
           [
-            "url": "https://graph.api.smartthings.com/api/token/${state.appAccessToken}/smartapps/installations/${app.id}/message",
+            "url": "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/message",
             "method": "POST",
             "generateAndForwardMeshbluCredentials": false
           ]
@@ -218,7 +239,7 @@ def createDevices(smartDevices) {
       }
 
     } catch (e) {
-      log.debug "you suck ${e}"
+      log.debug "unable to create new device ${e}"
     }
   }
 }
@@ -257,7 +278,6 @@ def devicesPage() {
     }
   } catch (e) {
     log.debug "devices error ${e}"
-    return
   }
 
   selectedCapabilities.each { capability ->
@@ -278,8 +298,8 @@ def devicesPage() {
 
 def receiveCode() {
   // revokeAccessToken()
-  // state.appAccessToken = createAccessToken()
-  log.debug "generated app access token ${state.appAccessToken}"
+  // state.accessToken = createAccessToken()
+  log.debug "generated app access token ${state.accessToken}"
 
   def postParams = [
   uri: getVendorTokenPath(),
@@ -308,29 +328,6 @@ def receiveCode() {
 
 String toQueryString(Map m) {
   return m.collect { k, v -> "${k}=${URLEncoder.encode(v.toString())}" }.sort().join("&")
-}
-
-def apiGet(String path, Closure callback)
-{
-  httpGet([
-  uri : apiUrl(),
-  path : path,
-  headers : [ 'Authorization' : 'Bearer ' + state.vendorAccessToken ]
-  ]) { response ->
-    callback.call(response)
-  }
-}
-
-def apiPut(String path, cmd, Closure callback)
-{
-  httpPutJson([
-  uri : apiUrl(),
-  path: path,
-  body: cmd,
-  headers : [ 'Authorization' : 'Bearer ' + state.vendorAccessToken ]
-  ]) { response ->
-    callback.call(response)
-  }
 }
 
 def initialize()
@@ -373,7 +370,7 @@ def getEventData(evt) {
   ]
 }
 
-def logger(evt) {
+def eventForward(evt) {
   def eventData = [ "devices" : "*", "payload" : getEventData(evt) ]
 
   log.debug "sending event: ${groovy.json.JsonOutput.toJson(eventData)}"
@@ -396,7 +393,7 @@ def logger(evt) {
       log.debug "sent off device event"
     }
   } catch (e) {
-    log.debug "you suck ${e}"
+    log.debug "unable to send device event ${e}"
   }
 }
 
@@ -466,10 +463,10 @@ def receiveMessage() {
           try {
             log.debug "calling httpPostJson!"
             httpPostJson(postParams) { response ->
-              log.debug "sent off device event"
+              log.debug "sent off command result"
             }
           } catch (e) {
-            log.debug "you suck ${e}"
+            log.debug "unable to send command result ${e}"
           }
 
         }
@@ -491,27 +488,35 @@ def updated() {
       }
       subscribed[thing.id] = true
       thing.supportedAttributes.each { attribute ->
-        log.debug "subscribe to ${attribute.name}"
-        subscribe thing, attribute.name, logger
+        log.debug "subscribe to attribute ${attribute.name}"
+        subscribe thing, attribute.name, eventForward
       }
       thing.supportedCommands.each { command ->
         log.debug "subscribe to command ${command.name}"
-        subscribeToCommand thing, command.name, logger
+        subscribeToCommand thing, command.name, eventForward
       }
       log.debug "subscribed to thing ${thing.id}"
     }
   }
-}
 
-def debugEvent(message, displayEvent) {
-
-  def results = [
-  name: "appdebug",
-  descriptionText: message,
-  displayed: displayEvent
-  ]
-  log.debug "Generating AppDebug Event: ${results}"
-  sendEvent (results)
+  // def myToken = new String((new Base64()).decode(state.vendorAccessToken)).split(":")[1]
+  //
+  // log.debug "decoded accessToken: ${decodedData}"
+  //
+  // def params = [
+  // uri: apiUrl() + "devices/${state.myUUID}/tokens/${myToken}",
+  // headers: ["Authorization": "Bearer ${state.vendorAccessToken}"]]
+  //
+  // log.debug "fetching url ${params.uri}"
+  // try {
+  //   httpDelete(params) { response ->
+  //     log.debug "revoked token for ${state.myUUID}...?"
+  //     state.vendorAccessToken = null
+  //   }
+  // } catch (e) {
+  //   log.debug "token delete error ${e}"
+  //   return
+  // }
 
 }
 
