@@ -25,14 +25,11 @@ SOFTWARE.
 import org.apache.commons.codec.binary.Base64
 import java.text.DecimalFormat
 
-private apiUrl()              { "https://meshblu.octoblu.com/" }
 private getVendorName()       { "Octoblu" }
 private getVendorIcon()       { "http://i.imgur.com/BjTfDYk.png" }
-private getVendorAuthPath()   { "https://oauth.octoblu.com/authorize" }
-private getVendorTokenPath()  { "https://oauth.octoblu.com/access_token" }
-private getClientId()         { (appSettings.clientId ?: "d2336830-6d7b-4325-bf79-391c5d4c270e") }
-private getClientSecret()     { (appSettings.clientSecret ?: "b4edb065c5ab3b09390e724be6523803dd80290a") }
-private getServerUrl()        { appSettings.serverUrl }
+private apiUrl()              { appSettings.apiUrl ?: "https://meshblu.octoblu.com/" }
+private getVendorAuthPath()   { appSettings.vendorAuthPath ?: "https://oauth.octoblu.com/authorize" }
+private getVendorTokenPath()  { appSettings.vendorTokenPath ?: "https://oauth.octoblu.com/access_token" }
 
 definition(
 name: "Octoblu",
@@ -43,9 +40,9 @@ category: "SmartThings Labs",
 iconUrl: "http://i.imgur.com/BjTfDYk.png",
 iconX2Url: "http://i.imgur.com/BjTfDYk.png"
 ) {
-  appSetting "clientId"
-  appSetting "clientSecret"
-  appSetting "serverUrl"
+  appSetting "apiUrl"
+  appSetting "vendorAuthPath"
+  appSetting "vendorTokenPath"
 }
 
 preferences {
@@ -56,24 +53,77 @@ preferences {
 
 mappings {
   path("/receiveCode") {
-    action: [
-    GET: "receiveCode"
-    ]
+    action: [ GET: "receiveCode" ]
   }
   path("/message") {
-    action: [
-    POST: "receiveMessage"
-    ]
+    action: [ POST: "receiveMessage" ]
   }
 }
 
+def createOAuthDevice() {
+  def oAuthDevice = [
+    "name": "SmartThings",
+    "owner": "68c39f40-cc13-4560-a68c-e8acd021cff9",
+    "type": "device:oauth",
+    "online": true,
+    "options": [
+      "name": "SmartThings",
+      "imageUrl": "https://i.imgur.com/TsXefbK.png",
+      "callbackUrl": "https://graph.api.smartthings.com/api/"
+    ],
+    "configureWhitelist": [ "68c39f40-cc13-4560-a68c-e8acd021cff9" ],
+    "discoverWhitelist": [ "*", "68c39f40-cc13-4560-a68c-e8acd021cff9" ],
+    "receiveWhitelist": [ "*" ],
+    "sendWhitelist": [ "*" ]
+  ]
+    // "optionsSchema": [
+    //   "type": "object",
+    //   "properties": [
+    //     "name": [
+    //       "type": "string",
+    //       "required": true
+    //     ],
+    //     "imageUrl": [
+    //       "type": "string",
+    //       "required": true
+    //     ],
+    //     "callbackUrl": [
+    //       "type": "string",
+    //       "required": true
+    //     ]
+    //   ]
+    // ],
+
+  def postParams = [ uri: apiUrl()+"devices",
+  body: groovy.json.JsonOutput.toJson(oAuthDevice)]
+
+  try {
+    httpPostJson(postParams) { response ->
+      log.debug "got new token for oAuth device ${response.data}"
+      state.oAuthUuid = response.data.uuid
+      state.oAuthToken = response.data.token
+    }
+  } catch (e) {
+    log.debug "unable to create oAuth device: ${e}"
+  }
+
+}
+
 def authPage() {
-  state.accessToken = createAccessToken()
-  log.debug "generated app access token ${state.accessToken}"
+
+  if (!state.accessToken) {
+    createAccessToken()
+  }
+
+  log.debug "using app access token ${state.accessToken}"
+
+  if (!state.oAuthToken) {
+    createOAuthDevice()
+  }
 
   def oauthParams = [
   response_type: "code",
-  client_id: getClientId(),
+  client_id: state.oAuthUuid,
   redirect_uri: "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveCode"
   ]
   def redirectUrl =  getVendorAuthPath() + '?' + toQueryString(oauthParams)
@@ -304,8 +354,8 @@ def receiveCode() {
   def postParams = [
   uri: getVendorTokenPath(),
   body: [
-  client_id: getClientId(),
-  client_secret: getClientSecret(),
+  client_id: state.oAuthUuid,
+  client_secret: state.oAuthToken,
   grant_type: "authorization_code",
   code: params.code ] ]
 
