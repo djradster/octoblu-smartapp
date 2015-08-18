@@ -76,23 +76,6 @@ def createOAuthDevice() {
     "receiveWhitelist": [ "*" ],
     "sendWhitelist": [ "*" ]
   ]
-    // "optionsSchema": [
-    //   "type": "object",
-    //   "properties": [
-    //     "name": [
-    //       "type": "string",
-    //       "required": true
-    //     ],
-    //     "imageUrl": [
-    //       "type": "string",
-    //       "required": true
-    //     ],
-    //     "callbackUrl": [
-    //       "type": "string",
-    //       "required": true
-    //     ]
-    //   ]
-    // ],
 
   def postParams = [ uri: apiUrl()+"devices",
   body: groovy.json.JsonOutput.toJson(oAuthDevice)]
@@ -100,8 +83,8 @@ def createOAuthDevice() {
   try {
     httpPostJson(postParams) { response ->
       log.debug "got new token for oAuth device ${response.data}"
-      state.oAuthUuid = response.data.uuid
-      state.oAuthToken = response.data.token
+      state.vendorOAuthUuid = response.data.uuid
+      state.vendorOAuthToken = response.data.token
     }
   } catch (e) {
     log.debug "unable to create oAuth device: ${e}"
@@ -117,19 +100,19 @@ def authPage() {
 
   log.debug "using app access token ${state.accessToken}"
 
-  if (!state.oAuthToken) {
+  if (!state.vendorOAuthToken) {
     createOAuthDevice()
   }
 
   def oauthParams = [
   response_type: "code",
-  client_id: state.oAuthUuid,
+  client_id: state.vendorOAuthUuid,
   redirect_uri: "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveCode"
   ]
   def redirectUrl =  getVendorAuthPath() + '?' + toQueryString(oauthParams)
   log.debug "tokened redirect_uri = ${oauthParams.redirect_uri}"
 
-  def isRequired = !state.vendorAccessToken
+  def isRequired = !state.vendorBearerToken
   return dynamicPage(name: "authPage", title: "Octoblu Authentication", nextPage:(isRequired ? null : "subscribePage"), install: isRequired, uninstall: showUninstall) {
     section {
       log.debug "url: ${redirectUrl}"
@@ -175,7 +158,7 @@ def resetVendorDeviceToken(smartDeviceId) {
   log.debug "getting new token for ${smartDeviceId}/${deviceUUID}"
   def postParams = [
   uri: apiUrl() + "devices/${deviceUUID}/token",
-  headers: ["Authorization": "Bearer ${state.vendorAccessToken}"]]
+  headers: ["Authorization": "Bearer ${state.vendorBearerToken}"]]
   try {
     httpPost(postParams) { response ->
       state.vendorDevices[smartDeviceId] = getVendorDeviceStateInfo(response.data)
@@ -249,9 +232,9 @@ def createDevices(smartDevices) {
       "name": "${smartDevice.displayName}",
       "smartDeviceId": "${smartDevice.id}",
       "logo": "https://i.imgur.com/TsXefbK.png",
-      "owner": "${state.myUUID}",
+      "owner": "${state.vendorUuid}",
       "configureWhitelist": [],
-      "discoverWhitelist": ["${state.myUUID}"],
+      "discoverWhitelist": ["${state.vendorUuid}"],
       "receiveWhitelist": ["*"],
       "sendWhitelist": ["*"],
       "type": "device:${smartDevice.name.replaceAll('\\s','-').toLowerCase()}",
@@ -269,7 +252,7 @@ def createDevices(smartDevices) {
 
     def params = [
     uri: apiUrl() + "devices",
-    headers: ["Authorization": "Bearer ${state.vendorAccessToken}"],
+    headers: ["Authorization": "Bearer ${state.vendorBearerToken}"],
     body: groovy.json.JsonOutput.toJson(deviceProperties) ]
 
     try {
@@ -296,22 +279,8 @@ def createDevices(smartDevices) {
 
 def devicesPage() {
   def postParams = [
-  uri: apiUrl() + "v2/whoami",
+  uri: apiUrl() + "devices?owner=${state.vendorUuid}&category=smart-things",
   headers: ["Authorization": "Bearer ${state.vendorAccessToken}"]]
-
-  log.debug "fetching url ${postParams.uri}"
-  try {
-    httpGet(postParams) { response ->
-      state.myUUID = response.data.uuid
-      log.debug "my uuid ${state.myUUID}"
-    }
-  } catch (e) {
-    log.debug "whoami error ${e}"
-    return
-  }
-
-  postParams.uri = apiUrl() + "devices?owner=${state.myUUID}&category=smart-things"
-
   state.vendorDevices = [:]
 
   log.debug "fetching url ${postParams.uri}"
@@ -339,7 +308,7 @@ def devicesPage() {
 
   return dynamicPage(name: "devicesPage", title: "Devices", install: true) {
     section {
-      paragraph title: "my uuid:", "${state.myUUID}"
+      paragraph title: "my uuid:", "${state.vendorUuid}"
       paragraph title: "number of smart devices:", "${state.vendorDevices.size()}"
       paragraph title: "your smart devices:", "${devInfo}"
     }
@@ -354,8 +323,8 @@ def receiveCode() {
   def postParams = [
   uri: getVendorTokenPath(),
   body: [
-  client_id: state.oAuthUuid,
-  client_secret: state.oAuthToken,
+  client_id: state.vendorOAuthUuid,
+  client_secret: state.vendorOAuthToken,
   grant_type: "authorization_code",
   code: params.code ] ]
 
@@ -366,9 +335,13 @@ def receiveCode() {
   try {
     httpPost(postParams) { response ->
       log.debug "response: ${response.data}"
-      state.vendorAccessToken = response.data.access_token
-      log.debug "have octoblu tokens ${state.vendorAccessToken}"
-      render contentType: 'text/html', data: (state.vendorAccessToken ? goodResponse : badResponse)
+      state.vendorBearerToken = response.data.access_token
+      def bearer = new String((new Base64()).decode(state.vendorBearerToken)).split(":")
+      state.vendorUuid = bearer[0]
+      state.vendorToken = bearer[1]
+
+      log.debug "have octoblu tokens ${state.vendorBearerToken}"
+      render contentType: 'text/html', data: (state.vendorBearerToken ? goodResponse : badResponse)
     }
   } catch(e) {
     log.debug "second leg oauth error ${e}"
@@ -549,25 +522,35 @@ def updated() {
     }
   }
 
-  // def myToken = new String((new Base64()).decode(state.vendorAccessToken)).split(":")[1]
-  //
-  // log.debug "decoded accessToken: ${decodedData}"
-  //
-  // def params = [
-  // uri: apiUrl() + "devices/${state.myUUID}/tokens/${myToken}",
-  // headers: ["Authorization": "Bearer ${state.vendorAccessToken}"]]
-  //
-  // log.debug "fetching url ${params.uri}"
-  // try {
-  //   httpDelete(params) { response ->
-  //     log.debug "revoked token for ${state.myUUID}...?"
-  //     state.vendorAccessToken = null
-  //   }
-  // } catch (e) {
-  //   log.debug "token delete error ${e}"
-  //   return
-  // }
+  def params = [
+  uri: apiUrl() + "devices/${state.vendorUuid}/tokens/${state.vendorToken}",
+  headers: ["Authorization": "Bearer ${state.vendorBearerToken}"]]
 
+  log.debug "fetching url ${params.uri}"
+  try {
+    httpDelete(params) { response ->
+      log.debug "revoked token for ${state.vendorUuid}...?"
+      state.vendorBearerToken = null
+      state.vendorUuid = null
+      state.vendorToken = null
+    }
+  } catch (e) {
+    log.debug "token delete error ${e}"
+  }
+
+  params.uri = apiUrl() + "devices/${state.vendorOAuthUuid}"
+  params.headers = ["meshblu_auth_uuid": state.vendorOAuthUuid, "meshblu_auth_token": state.vendorOAuthToken]
+
+  log.debug "fetching url ${params.uri}"
+  try {
+    httpDelete(params) { response ->
+      log.debug "deleting oauth device for ${state.vendorOAuthUuid}...?"
+      state.vendorOAuthUuid = null
+      state.vendorOAuthToken = null
+    }
+  } catch (e) {
+    log.debug "oauth token delete error ${e}"
+  }
 }
 
 private Boolean canInstallLabs()
