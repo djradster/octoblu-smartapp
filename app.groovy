@@ -24,6 +24,10 @@ SOFTWARE.
 
 import org.apache.commons.codec.binary.Base64
 import java.text.DecimalFormat
+import groovy.transform.Field
+
+@Field final USE_DEBUG = false
+@Field final selectedCapabilities = [ "actuator", "sensor" ]
 
 private getVendorName()       { "Octoblu" }
 private getVendorIcon()       { "http://i.imgur.com/BjTfDYk.png" }
@@ -60,6 +64,49 @@ mappings {
   }
 }
 
+// --------------------------------------
+
+def authPage() {
+
+  if (!state.accessToken) {
+    createAccessToken()
+  }
+
+  debug "using app access token ${state.accessToken}"
+
+  if (!state.vendorOAuthToken) {
+    createOAuthDevice()
+  }
+
+  def oauthParams = [
+  response_type: "code",
+  client_id: state.vendorOAuthUuid,
+  redirect_uri: "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveCode"
+  ]
+  def redirectUrl =  getVendorAuthPath() + '?' + toQueryString(oauthParams)
+  debug "tokened redirect_uri = ${oauthParams.redirect_uri}"
+
+  def isRequired = !state.vendorBearerToken
+  return dynamicPage(name: "authPage", title: "Octoblu Authentication", nextPage:(isRequired ? null : "subscribePage"), install: isRequired, uninstall: showUninstall) {
+    section {
+      debug "url: ${redirectUrl}"
+      if (isRequired) {
+        paragraph title: "Token does not exist.", "Please login to Octoblu to complete setup."
+      } else {
+        paragraph title: "Token created.", "Login is not required."
+      }
+      href url:redirectUrl, style:"embedded", title: "Authorize", required: isRequired, description:"Click to fetch Octoblu Token."
+    }
+    section {
+      input name: "showUninstall", type: "bool", title: "uninstall", description: "false", submitOnChange: true
+      if (showUninstall) {
+        paragraph title: "so long and thanks for all the fish", "sorry to see me leave ;_;"
+        paragraph title: "i really promise to try harder next time", "please ignore the big red button"
+      }
+    }
+  }
+}
+
 def createOAuthDevice() {
   def oAuthDevice = [
     "name": "SmartThings",
@@ -82,90 +129,75 @@ def createOAuthDevice() {
 
   try {
     httpPostJson(postParams) { response ->
-      log.debug "got new token for oAuth device ${response.data}"
+      debug "got new token for oAuth device ${response.data}"
       state.vendorOAuthUuid = response.data.uuid
       state.vendorOAuthToken = response.data.token
     }
   } catch (e) {
-    log.debug "unable to create oAuth device: ${e}"
+    log.error "unable to create oAuth device: ${e}"
   }
 
 }
 
-def authPage() {
-
-  if (!state.accessToken) {
-    createAccessToken()
-  }
-
-  log.debug "using app access token ${state.accessToken}"
-
-  if (!state.vendorOAuthToken) {
-    createOAuthDevice()
-  }
-
-  def oauthParams = [
-  response_type: "code",
-  client_id: state.vendorOAuthUuid,
-  redirect_uri: "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveCode"
-  ]
-  def redirectUrl =  getVendorAuthPath() + '?' + toQueryString(oauthParams)
-  log.debug "tokened redirect_uri = ${oauthParams.redirect_uri}"
-
-  def isRequired = !state.vendorBearerToken
-  return dynamicPage(name: "authPage", title: "Octoblu Authentication", nextPage:(isRequired ? null : "subscribePage"), install: isRequired, uninstall: showUninstall) {
-    section {
-      log.debug "url: ${redirectUrl}"
-      if (isRequired) {
-        paragraph title: "Token does not exist.", "Please login to Octoblu to complete setup."
-      } else {
-        paragraph title: "Token created.", "Login is not required."
-      }
-      href url:redirectUrl, style:"embedded", title: "Login", required: isRequired, description:"Click to fetch Octoblu Token."
-    }
-    section {
-      input name: "showUninstall", type: "bool", title: "uninstall", description: "false", submitOnChange: true
-      if (showUninstall) {
-        paragraph title: "so long and thanks for all the fish", "sorry to see me leave ;_;"
-        paragraph title: "i really promise to try harder next time", "please ignore the big red button"
-      }
-    }
-  }
-}
+// --------------------------------------
 
 def subscribePage() {
   return dynamicPage(name: "subscribePage", title: "Subscribe to Things", nextPage: "devicesPage") {
     section {
-      input name: "selectedCapabilities", type: "enum", title: "capability filter",
-      submitOnChange: true, multiple: true, required: false, options: [ "actuator", "sensor" ]
+      // input name: "selectedCapabilities", type: "enum", title: "capability filter",
+      // submitOnChange: true, multiple: true, required: false, options: [ "actuator", "sensor" ]
       for (capability in selectedCapabilities) {
-        input name: "${capability}Capability".toString(), type: "capability.$capability", title: "$capability things", multiple: true, required: false
+         input name: "${capability}Capability".toString(), type: "capability.$capability", title: "$capability things", multiple: true, required: false
       }
     }
   }
 }
 
-def getVendorDeviceStateInfo(device) {
-  return [ "uuid": device.uuid, "token": device.token ]
-}
+// --------------------------------------
 
-def resetVendorDeviceToken(smartDeviceId) {
-  def deviceUUID = state.vendorDevices[smartDeviceId].uuid
-  if (!deviceUUID) {
-    log.debug "no device uuid in resetVendorDeviceToken?"
-    return
-  }
-  log.debug "getting new token for ${smartDeviceId}/${deviceUUID}"
+def devicesPage() {
   def postParams = [
-  uri: apiUrl() + "devices/${deviceUUID}/token",
+  uri: apiUrl() + "devices?owner=${state.vendorUuid}&category=smart-things",
   headers: ["Authorization": "Bearer ${state.vendorBearerToken}"]]
+  state.vendorDevices = [:]
+
+  def hasDevice = [:]
+  selectedCapabilities.each { capability ->
+    def smartDevices = settings["${capability}Capability"]
+    smartDevices.each { smartDevice ->
+      hasDevice[smartDevice.id] = true
+    }
+  }
+
+  debug "getting url ${postParams.uri}"
   try {
-    httpPost(postParams) { response ->
-      state.vendorDevices[smartDeviceId] = getVendorDeviceStateInfo(response.data)
-      log.debug "got new token for ${smartDeviceId}/${deviceUUID}"
+    httpGet(postParams) { response ->
+      debug "devices json ${response.data.devices}"
+      response.data.devices.each { device ->
+        if (device.smartDeviceId && hasDevice[device.smartDeviceId]) {
+          debug "found device ${device.uuid} with smartDeviceId ${device.smartDeviceId}"
+          state.vendorDevices[device.smartDeviceId] = getVendorDeviceStateInfo(device)
+        }
+        debug "has device: ${device.uuid} ${device.name} ${device.type}"
+      }
     }
   } catch (e) {
-    log.debug "unable to get new token ${e}"
+    log.error "devices error ${e}"
+  }
+
+  selectedCapabilities.each { capability ->
+    debug "checking devices for capability ${capability}"
+    createDevices(settings["${capability}Capability"])
+  }
+
+  def devInfo = state.vendorDevices.collect { k, v -> "${v.uuid} " }.sort().join(" \n")
+
+  return dynamicPage(name: "devicesPage", title: "Octoblu Things", install: true) {
+    section {
+      paragraph title: "my uuid:", "${state.vendorUuid}"
+      paragraph title: "my smart things (${state.vendorDevices.size()}):", "${devInfo}"
+      paragraph title: "finish setup", "click 'Done' to subscribe to smart thing events"
+    }
   }
 }
 
@@ -187,7 +219,7 @@ def createDevices(smartDevices) {
     //   capabilitiesString += "<b>${capability.name}</b><br/>"
     // }
 
-    log.debug "creating device for ${smartDevice.id}"
+    debug "creating device for ${smartDevice.id}"
 
     def messageSchema = [
       "type": "object",
@@ -258,7 +290,7 @@ def createDevices(smartDevices) {
     try {
 
       if (!state.vendorDevices[smartDevice.id]) {
-        log.debug "creating new device for ${smartDevice.id}"
+        debug "creating new device for ${smartDevice.id}"
         httpPostJson(params) { response ->
           state.vendorDevices[smartDevice.id] = getVendorDeviceStateInfo(response.data)
         }
@@ -266,59 +298,102 @@ def createDevices(smartDevices) {
       }
 
       params.uri = params.uri + "/${state.vendorDevices[smartDevice.id].uuid}"
-      log.debug "the device ${smartDevice.id} has already been created, updating ${params.uri}"
+      debug "the device ${smartDevice.id} has already been created, updating ${params.uri}"
       httpPutJson(params) { response ->
         resetVendorDeviceToken(smartDevice.id);
       }
 
     } catch (e) {
-      log.debug "unable to create new device ${e}"
+      log.error "unable to create new device ${e}"
     }
   }
 }
 
-def devicesPage() {
-  def postParams = [
-  uri: apiUrl() + "devices?owner=${state.vendorUuid}&category=smart-things",
-  headers: ["Authorization": "Bearer ${state.vendorAccessToken}"]]
-  state.vendorDevices = [:]
+def getVendorDeviceStateInfo(device) {
+  return [ "uuid": device.uuid, "token": device.token ]
+}
 
-  log.debug "fetching url ${postParams.uri}"
+def resetVendorDeviceToken(smartDeviceId) {
+  def deviceUUID = state.vendorDevices[smartDeviceId].uuid
+  if (!deviceUUID) {
+    debug "no device uuid in resetVendorDeviceToken?"
+    return
+  }
+  debug "getting new token for ${smartDeviceId}/${deviceUUID}"
+  def postParams = [
+  uri: apiUrl() + "devices/${deviceUUID}/token",
+  headers: ["Authorization": "Bearer ${state.vendorBearerToken}"]]
   try {
-    httpGet(postParams) { response ->
-      log.debug "devices json ${response.data.devices}"
-      response.data.devices.each { device ->
-        if (device.smartDeviceId) {
-          log.debug "found device ${device.uuid} with smartDeviceId ${device.smartDeviceId}"
-          state.vendorDevices[device.smartDeviceId] = getVendorDeviceStateInfo(device)
-        }
-        log.debug "has device: ${device.uuid} ${device.name} ${device.type}"
-      }
+    httpPost(postParams) { response ->
+      state.vendorDevices[smartDeviceId] = getVendorDeviceStateInfo(response.data)
+      debug "got new token for ${smartDeviceId}/${deviceUUID}"
     }
   } catch (e) {
-    log.debug "devices error ${e}"
-  }
-
-  selectedCapabilities.each { capability ->
-    log.debug "checking devices for capability ${capability}"
-    createDevices(settings["${capability}Capability"])
-  }
-
-  def devInfo = state.vendorDevices.collect { k, v -> "${k}: ${v.uuid}/ ${v.token} " }.sort().join("\n")
-
-  return dynamicPage(name: "devicesPage", title: "Devices", install: true) {
-    section {
-      paragraph title: "my uuid:", "${state.vendorUuid}"
-      paragraph title: "number of smart devices:", "${state.vendorDevices.size()}"
-      paragraph title: "your smart devices:", "${devInfo}"
-    }
+    log.error "unable to get new token ${e}"
   }
 }
+
+// --------------------------------------
+
+def updated() {
+  unsubscribe()
+  debug "Updated with settings: ${settings}"
+  def subscribed = [:]
+  selectedCapabilities.each{ capability ->
+    settings."${capability}Capability".each { thing ->
+      if (subscribed[thing.id]) {
+        return
+      }
+      subscribed[thing.id] = true
+      thing.supportedAttributes.each { attribute ->
+        debug "subscribe to attribute ${attribute.name}"
+        subscribe thing, attribute.name, eventForward
+      }
+      thing.supportedCommands.each { command ->
+        debug "subscribe to command ${command.name}"
+        subscribeToCommand thing, command.name, eventForward
+      }
+      debug "subscribed to thing ${thing.id}"
+    }
+  }
+
+  def params = [
+  uri: apiUrl() + "devices/${state.vendorUuid}/tokens/${state.vendorToken}",
+  headers: ["Authorization": "Bearer ${state.vendorBearerToken}"]]
+
+  debug "deleting url ${params.uri}"
+  try {
+    httpDelete(params) { response ->
+      debug "revoked token for ${state.vendorUuid}...?"
+      state.vendorBearerToken = null
+      state.vendorUuid = null
+      state.vendorToken = null
+    }
+  } catch (e) {
+    log.error "token delete error ${e}"
+  }
+
+  params.uri = apiUrl() + "devices/${state.vendorOAuthUuid}"
+  params.headers = ["meshblu_auth_uuid": state.vendorOAuthUuid, "meshblu_auth_token": state.vendorOAuthToken]
+
+  debug "deleting url ${params.uri}"
+  try {
+    httpDelete(params) { response ->
+      debug "deleting oauth device for ${state.vendorOAuthUuid}...?"
+      state.vendorOAuthUuid = null
+      state.vendorOAuthToken = null
+    }
+  } catch (e) {
+    log.error "oauth token delete error ${e}"
+  }
+}
+
+// --------------------------------------
 
 def receiveCode() {
   // revokeAccessToken()
   // state.accessToken = createAccessToken()
-  log.debug "generated app access token ${state.accessToken}"
+  debug "generated app access token ${state.accessToken}"
 
   def postParams = [
   uri: getVendorTokenPath(),
@@ -330,41 +405,23 @@ def receiveCode() {
 
   def goodResponse = "<html><body><p>&nbsp;</p><h2>Received Octoblu Token!</h2><h3>Click 'Done' to finish setup.</h3></body></html>"
   def badResponse = "<html><body><p>&nbsp;</p><h2>Something went wrong...</h2><h3>PANIC!</h3></body></html>"
-  log.debug "authorizeToken with postParams ${postParams}"
+  debug "authorizeToken with postParams ${postParams}"
 
   try {
     httpPost(postParams) { response ->
-      log.debug "response: ${response.data}"
+      debug "response: ${response.data}"
       state.vendorBearerToken = response.data.access_token
       def bearer = new String((new Base64()).decode(state.vendorBearerToken)).split(":")
       state.vendorUuid = bearer[0]
       state.vendorToken = bearer[1]
 
-      log.debug "have octoblu tokens ${state.vendorBearerToken}"
+      debug "have octoblu tokens ${state.vendorBearerToken}"
       render contentType: 'text/html', data: (state.vendorBearerToken ? goodResponse : badResponse)
     }
   } catch(e) {
-    log.debug "second leg oauth error ${e}"
+    log.error "second leg oauth error ${e}"
     render contentType: 'text/html', data: badResponse
   }
-}
-
-String toQueryString(Map m) {
-  return m.collect { k, v -> "${k}=${URLEncoder.encode(v.toString())}" }.sort().join("&")
-}
-
-def initialize()
-{
-  log.debug "Initialized with settings: ${settings}"
-}
-
-def uninstalled()
-{
-  log.debug "In uninstalled"
-}
-
-def installed() {
-  log.debug "Installed with settings: ${settings}"
 }
 
 def getEventData(evt) {
@@ -396,15 +453,15 @@ def getEventData(evt) {
 def eventForward(evt) {
   def eventData = [ "devices" : "*", "payload" : getEventData(evt) ]
 
-  log.debug "sending event: ${groovy.json.JsonOutput.toJson(eventData)}"
+  debug "sending event: ${groovy.json.JsonOutput.toJson(eventData)}"
 
   def vendorDevice = state.vendorDevices[evt.deviceId]
   if (!vendorDevice) {
-    log.debug "aborting, vendor device for ${evt.deviceId} doesn't exist?"
+    log.error "aborting, vendor device for ${evt.deviceId} doesn't exist?"
     return
   }
 
-  log.debug "using device ${vendorDevice}"
+  debug "using device ${vendorDevice}"
 
   def postParams = [
   uri: apiUrl() + "messages",
@@ -413,17 +470,19 @@ def eventForward(evt) {
 
   try {
     httpPostJson(postParams) { response ->
-      log.debug "sent off device event"
+      debug "sent off device event"
     }
   } catch (e) {
-    log.debug "unable to send device event ${e}"
+    log.error "unable to send device event ${e}"
   }
 }
 
+// --------------------------------------
+
 def receiveMessage() {
-  log.debug("received data ${request.JSON}")
+  debug("received data ${request.JSON}")
   def foundDevice = false
-  settings.selectedCapabilities.each{ capability ->
+  selectedCapabilities.each{ capability ->
     settings."${capability}Capability".each { thing ->
       if (!foundDevice && thing.id == request.JSON.payload.smartDeviceId) {
         foundDevice = true
@@ -431,23 +490,23 @@ def receiveMessage() {
           def args = (request.JSON.payload.arguments ?: [])
           thing."${request.JSON.payload.command}"(*args)
         } else {
-          log.debug "calling internal command ${request.JSON.payload.command}"
+          debug "calling internal command ${request.JSON.payload.command}"
           def commandData = [:]
           switch (request.JSON.payload.command) {
             case ".value":
-              log.debug "got command .value"
+              debug "got command .value"
               thing.supportedAttributes.each { attribute ->
                 commandData[attribute.name] = thing.latestValue(attribute.name)
               }
               break
             case ".state":
-              log.debug "got command .state"
+              debug "got command .state"
               thing.supportedAttributes.each { attribute ->
                 commandData[attribute.name] = thing.latestState(attribute.name)?.value
               }
               break
             case ".device":
-              log.debug "got command .device"
+              debug "got command .device"
               commandData = [
                 "id" : thing.id,
                 "displayName" : thing.displayName,
@@ -459,7 +518,7 @@ def receiveMessage() {
               ]
               break
             case ".events":
-              log.debug "got command .events"
+              debug "got command .events"
               commandData.events = []
               thing.events().each { event ->
                 commandData.events.push(getEventData(event))
@@ -467,90 +526,62 @@ def receiveMessage() {
               break
             default:
               commandData.error = "unknown command"
-              log.debug "unknown command ${request.JSON.payload.command}"
+              debug "unknown command ${request.JSON.payload.command}"
           }
           commandData.command = request.JSON.payload.command
 
-          log.debug "done switch!"
+          debug "done switch!"
 
           def vendorDevice = state.vendorDevices[thing.id]
-          log.debug "with vendorDevice ${vendorDevice} for ${groovy.json.JsonOutput.toJson(commandData)}"
+          debug "with vendorDevice ${vendorDevice} for ${groovy.json.JsonOutput.toJson(commandData)}"
 
           def postParams = [
             uri: apiUrl() + "messages",
             headers: ["meshblu_auth_uuid": vendorDevice.uuid, "meshblu_auth_token": vendorDevice.token],
             body: groovy.json.JsonOutput.toJson([ "devices" : "*", "payload" : commandData ]) ]
 
-          log.debug "posting params ${postParams}"
+          debug "posting params ${postParams}"
 
           try {
-            log.debug "calling httpPostJson!"
+            debug "calling httpPostJson!"
             httpPostJson(postParams) { response ->
-              log.debug "sent off command result"
+              debug "sent off command result"
             }
           } catch (e) {
-            log.debug "unable to send command result ${e}"
+            log.error "unable to send command result ${e}"
           }
 
         }
 
-        log.debug "done else"
+        debug "done else"
       }
     }
   }
 }
 
-def updated() {
-  unsubscribe()
-  log.debug "Updated with settings: ${settings}"
-  def subscribed = [:]
-  settings.selectedCapabilities.each{ capability ->
-    settings."${capability}Capability".each { thing ->
-      if (subscribed[thing.id]) {
-        return
-      }
-      subscribed[thing.id] = true
-      thing.supportedAttributes.each { attribute ->
-        log.debug "subscribe to attribute ${attribute.name}"
-        subscribe thing, attribute.name, eventForward
-      }
-      thing.supportedCommands.each { command ->
-        log.debug "subscribe to command ${command.name}"
-        subscribeToCommand thing, command.name, eventForward
-      }
-      log.debug "subscribed to thing ${thing.id}"
-    }
-  }
+// --------------------------------------
 
-  def params = [
-  uri: apiUrl() + "devices/${state.vendorUuid}/tokens/${state.vendorToken}",
-  headers: ["Authorization": "Bearer ${state.vendorBearerToken}"]]
+private debug(logStr) {
+  if (USE_DEBUG)
+    log.debug logStr
+}
 
-  log.debug "fetching url ${params.uri}"
-  try {
-    httpDelete(params) { response ->
-      log.debug "revoked token for ${state.vendorUuid}...?"
-      state.vendorBearerToken = null
-      state.vendorUuid = null
-      state.vendorToken = null
-    }
-  } catch (e) {
-    log.debug "token delete error ${e}"
-  }
+String toQueryString(Map m) {
+  return m.collect { k, v -> "${k}=${URLEncoder.encode(v.toString())}" }.sort().join("&")
+}
 
-  params.uri = apiUrl() + "devices/${state.vendorOAuthUuid}"
-  params.headers = ["meshblu_auth_uuid": state.vendorOAuthUuid, "meshblu_auth_token": state.vendorOAuthToken]
+def initialize()
+{
+  debug "Initialized with settings: ${settings}"
+}
 
-  log.debug "fetching url ${params.uri}"
-  try {
-    httpDelete(params) { response ->
-      log.debug "deleting oauth device for ${state.vendorOAuthUuid}...?"
-      state.vendorOAuthUuid = null
-      state.vendorOAuthToken = null
-    }
-  } catch (e) {
-    log.debug "oauth token delete error ${e}"
-  }
+def uninstalled()
+{
+  debug "In uninstalled"
+}
+
+def installed() {
+  debug "Installed with settings: ${settings}"
 }
 
 private Boolean canInstallLabs()
