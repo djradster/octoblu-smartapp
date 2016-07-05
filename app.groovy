@@ -50,6 +50,7 @@ iconX2Url: "http://i.imgur.com/BjTfDYk.png"
 }
 
 preferences {
+  page(name: "welcomePage")
   page(name: "authPage")
   page(name: "subscribePage")
   page(name: "devicesPage")
@@ -61,6 +62,37 @@ mappings {
   }
   path("/message") {
     action: [ POST: "receiveMessage" ]
+  }
+}
+
+// --------------------------------------
+
+def getDevInfo() {
+  return state.vendorDevices.collect { k, v -> "${v.uuid} " }.sort().join(" \n")
+}
+
+// --------------------------------------
+
+def welcomePage() {
+  cleanUpTokens()
+
+  return dynamicPage(name: "welcomePage", nextPage: "authPage", uninstall: showUninstall) {
+    section {
+      paragraph title: "Welcome to the Octoblu SmartThings App!", "press 'Next' to continue"
+    }
+    if (state.vendorDevices && state.vendorDevices.size()>0) {
+      section {
+        paragraph title: "My SmartThings in Octobu (${state.vendorDevices.size()}):", getDevInfo()
+      }
+    }
+    if (state.installed) {
+      section {
+        input name: "showUninstall", type: "bool", title: "Uninstall", description: "false", submitOnChange: true
+        if (showUninstall) {
+          paragraph title: "Sorry to see you go!", "please email <support@octoblu.com> with any feedback or issues"
+        }
+      }
+    }
   }
 }
 
@@ -79,29 +111,22 @@ def authPage() {
   }
 
   def oauthParams = [
-  response_type: "code",
-  client_id: state.vendorOAuthUuid,
-  redirect_uri: "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveCode"
+    response_type: "code",
+    client_id: state.vendorOAuthUuid,
+    redirect_uri: getApiServerUrl() + "/api/token/${state.accessToken}/smartapps/installations/${app.id}/receiveCode"
   ]
+
   def redirectUrl =  getVendorAuthPath() + '?' + toQueryString(oauthParams)
   debug "tokened redirect_uri = ${oauthParams.redirect_uri}"
 
   def isRequired = !state.vendorBearerToken
-  return dynamicPage(name: "authPage", title: "Octoblu Authentication", nextPage:(isRequired ? null : "subscribePage"), install: isRequired, uninstall: showUninstall) {
+  return dynamicPage(name: "authPage", title: "Octoblu Authentication", nextPage:(isRequired ? null : "subscribePage"), install: isRequired) {
     section {
       debug "url: ${redirectUrl}"
       if (isRequired) {
-        paragraph title: "Token does not exist.", "Please login to Octoblu to complete setup."
+        href url:redirectUrl, style:"embedded", title: "Authorize with Octoblu", required: isRequired, description:"please login with Octoblu to complete setup"
       } else {
-        paragraph title: "Token created.", "Login is not required."
-      }
-      href url:redirectUrl, style:"embedded", title: "Authorize", required: isRequired, description:"Click to fetch Octoblu Token."
-    }
-    section {
-      input name: "showUninstall", type: "bool", title: "uninstall", description: "false", submitOnChange: true
-      if (showUninstall) {
-        paragraph title: "so long and thanks for all the fish", "sorry to see me leave ;_;"
-        paragraph title: "i really promise to try harder next time", "please ignore the big red button"
+        paragraph title: "Please press 'Next' to continue", "Octoblu token has been created"
       }
     }
   }
@@ -116,7 +141,7 @@ def createOAuthDevice() {
     "options": [
       "name": "SmartThings",
       "imageUrl": "https://i.imgur.com/TsXefbK.png",
-      "callbackUrl": "https://graph.api.smartthings.com/api/"
+      "callbackUrl": getApiServerUrl() + "/api"
     ],
     "configureWhitelist": [ "68c39f40-cc13-4560-a68c-e8acd021cff9" ],
     "discoverWhitelist": [ "*", "68c39f40-cc13-4560-a68c-e8acd021cff9" ],
@@ -142,12 +167,12 @@ def createOAuthDevice() {
 // --------------------------------------
 
 def subscribePage() {
-  return dynamicPage(name: "subscribePage", title: "Subscribe to Things", nextPage: "devicesPage") {
+  return dynamicPage(name: "subscribePage", title: "Subscribe to SmartThings", nextPage: "devicesPage") {
     section {
       // input name: "selectedCapabilities", type: "enum", title: "capability filter",
       // submitOnChange: true, multiple: true, required: false, options: [ "actuator", "sensor" ]
       for (capability in selectedCapabilities) {
-         input name: "${capability}Capability".toString(), type: "capability.$capability", title: "$capability things", multiple: true, required: false
+         input name: "${capability}Capability".toString(), type: "capability.$capability", title: "${capability.capitalize()} Things", multiple: true, required: false
       }
     }
   }
@@ -190,13 +215,11 @@ def devicesPage() {
     createDevices(settings["${capability}Capability"])
   }
 
-  def devInfo = state.vendorDevices.collect { k, v -> "${v.uuid} " }.sort().join(" \n")
-
   return dynamicPage(name: "devicesPage", title: "Octoblu Things", install: true) {
     section {
-      paragraph title: "my uuid:", "${state.vendorUuid}"
-      paragraph title: "my smart things (${state.vendorDevices.size()}):", "${devInfo}"
-      paragraph title: "finish setup", "click 'Done' to subscribe to smart thing events"
+      paragraph title: "Please press 'Done' to finish setup", "and subscribe to SmartThing events"
+      paragraph title: "My Octoblu UUID:", "${state.vendorUuid}"
+      paragraph title: "My SmartThings in Octobu (${state.vendorDevices.size()}):", getDevInfo()
     }
   }
 }
@@ -274,7 +297,7 @@ def createDevices(smartDevices) {
       "meshblu": [
         "messageHooks": [
           [
-            "url": "https://graph.api.smartthings.com/api/token/${state.accessToken}/smartapps/installations/${app.id}/message",
+            "url": getApiServerUrl() + "/api/token/${state.accessToken}/smartapps/installations/${app.id}/message",
             "method": "POST",
             "generateAndForwardMeshbluCredentials": false
           ]
@@ -356,36 +379,53 @@ def updated() {
       debug "subscribed to thing ${thing.id}"
     }
   }
+  cleanUpTokens()
+}
 
-  def params = [
-  uri: apiUrl() + "devices/${state.vendorUuid}/tokens/${state.vendorToken}",
-  headers: ["Authorization": "Bearer ${state.vendorBearerToken}"]]
+// --------------------------------------
 
-  debug "deleting url ${params.uri}"
-  try {
-    httpDelete(params) { response ->
-      debug "revoked token for ${state.vendorUuid}...?"
-      state.vendorBearerToken = null
-      state.vendorUuid = null
-      state.vendorToken = null
+def cleanUpTokens() {
+
+  if (state.vendorToken) {
+    def params = [
+      uri: apiUrl() + "devices/${state.vendorUuid}/tokens/${state.vendorToken}",
+      headers: ["Authorization": "Bearer ${state.vendorBearerToken}"]
+    ]
+
+    debug "deleting url ${params.uri}"
+    try {
+      httpDelete(params) { response ->
+        debug "revoked token for ${state.vendorUuid}...?"
+      }
+    } catch (e) {
+      log.error "token delete error ${e}"
     }
-  } catch (e) {
-    log.error "token delete error ${e}"
   }
 
-  params.uri = apiUrl() + "devices/${state.vendorOAuthUuid}"
-  params.headers = ["meshblu_auth_uuid": state.vendorOAuthUuid, "meshblu_auth_token": state.vendorOAuthToken]
+  state.vendorBearerToken = null
+  state.vendorUuid = null
+  state.vendorToken = null
 
-  debug "deleting url ${params.uri}"
-  try {
-    httpDelete(params) { response ->
-      debug "deleting oauth device for ${state.vendorOAuthUuid}...?"
-      state.vendorOAuthUuid = null
-      state.vendorOAuthToken = null
+  if (state.vendorOAuthToken) {
+    params.uri = apiUrl() + "devices/${state.vendorOAuthUuid}"
+    params.headers = [
+      "meshblu_auth_uuid": state.vendorOAuthUuid,
+      "meshblu_auth_token": state.vendorOAuthToken
+    ]
+
+    debug "deleting url ${params.uri}"
+    try {
+      httpDelete(params) { response ->
+        debug "deleted oauth device for ${state.vendorOAuthUuid}...?"
+      }
+    } catch (e) {
+      log.error "oauth token delete error ${e}"
     }
-  } catch (e) {
-    log.error "oauth token delete error ${e}"
   }
+
+  state.vendorOAuthUuid = null
+  state.vendorOAuthToken = null
+
 }
 
 // --------------------------------------
@@ -396,15 +436,20 @@ def receiveCode() {
   debug "generated app access token ${state.accessToken}"
 
   def postParams = [
-  uri: getVendorTokenPath(),
-  body: [
-  client_id: state.vendorOAuthUuid,
-  client_secret: state.vendorOAuthToken,
-  grant_type: "authorization_code",
-  code: params.code ] ]
+    uri: getVendorTokenPath(),
+    body: [
+      client_id: state.vendorOAuthUuid,
+      client_secret: state.vendorOAuthToken,
+      grant_type: "authorization_code",
+      code: params.code
+    ]
+  ]
 
-  def goodResponse = "<html><body><p>&nbsp;</p><h2>Received Octoblu Token!</h2><h3>Click 'Done' to finish setup.</h3></body></html>"
-  def badResponse = "<html><body><p>&nbsp;</p><h2>Something went wrong...</h2><h3>PANIC!</h3></body></html>"
+  def style = "<style type='text/css'>body{font-size:2em;padding:1em}</style>"
+  def startBody = "<html>${style}<body>"
+  def endBody = "</body></html>"
+  def goodResponse = "${startBody}<h1>Received Octoblu Token!</h1><h2>Press 'Done' to finish setup.</h2>${endBody}"
+  def badResponse = "${startBody}<h1>Something went wrong...</h1><h2>PANIC!</h2>${endBody}"
   debug "authorizeToken with postParams ${postParams}"
 
   try {
@@ -464,9 +509,13 @@ def eventForward(evt) {
   debug "using device ${vendorDevice}"
 
   def postParams = [
-  uri: apiUrl() + "messages",
-  headers: ["meshblu_auth_uuid": vendorDevice.uuid, "meshblu_auth_token": vendorDevice.token],
-  body: groovy.json.JsonOutput.toJson(eventData) ]
+    uri: apiUrl() + "messages",
+    headers: [
+      "meshblu_auth_uuid": vendorDevice.uuid,
+      "meshblu_auth_token": vendorDevice.token
+    ],
+    body: groovy.json.JsonOutput.toJson(eventData)
+  ]
 
   try {
     httpPostJson(postParams) { response ->
@@ -582,6 +631,7 @@ def uninstalled()
 
 def installed() {
   debug "Installed with settings: ${settings}"
+  state.installed = true
 }
 
 private Boolean canInstallLabs()
