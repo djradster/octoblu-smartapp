@@ -26,7 +26,7 @@ import org.apache.commons.codec.binary.Base64
 import java.text.DecimalFormat
 import groovy.transform.Field
 
-@Field final USE_DEBUG = false
+@Field final USE_DEBUG = true
 @Field final selectedCapabilities = [ "actuator", "sensor" ]
 
 private getVendorName()       { "Octoblu" }
@@ -471,25 +471,24 @@ def receiveCode() {
 
 def getEventData(evt) {
   return [
+  "date" : evt.date,
   "id" : evt.id,
-  "name" : evt.name,
-  "value" : evt.value,
+  "data" : evt.data,
+  "description" : evt.description,
+  "descriptionText" : evt.descriptionText,
+  "displayName" : evt.displayName,
   "deviceId" : evt.deviceId,
   "hubId" : evt.hubId,
-  "locationId" : evt.locationId,
   "installedSmartAppId" : evt.installedSmartAppId,
-  "date" : evt.date,
-  "dateValue": evt.dateValue,
   "isoDate" : evt.isoDate,
   "isDigital" : evt.isDigital(),
   "isPhysical" : evt.isPhysical(),
   "isStateChange" : evt.isStateChange(),
-  "linkText" : evt.linkText,
-  "description" : evt.description,
-  "descriptionText" : evt.descriptionText,
-  "displayName" : evt.displayName,
+  "locationId" : evt.locationId,
+  "name" : evt.name,
   "source" : evt.source,
   "unit" : evt.unit,
+  "value" : evt.value,
   "category" : "event",
   "type" : "device:smart-thing"
   ]
@@ -579,8 +578,6 @@ def receiveMessage() {
           }
           commandData.command = request.JSON.payload.command
 
-          debug "done switch!"
-
           def vendorDevice = state.vendorDevices[thing.id]
           debug "with vendorDevice ${vendorDevice} for ${groovy.json.JsonOutput.toJson(commandData)}"
 
@@ -601,8 +598,6 @@ def receiveMessage() {
           }
 
         }
-
-        debug "done else"
       }
     }
   }
