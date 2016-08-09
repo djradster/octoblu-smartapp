@@ -228,14 +228,17 @@ def createDevices(smartDevices) {
   smartDevices.each { smartDevice ->
 
     def usesArguments = false
-    def commandInfo = ""
-    def commandArray = [ ".value", ".state", ".device", ".events"]
+    def commands = [[ "name": ".value" ],[ "name": ".state" ],[ "name": ".device" ],[ "name": ".events" ]]
 
     smartDevice.supportedCommands.each { command ->
-      commandInfo += "<b>${command.name}<b>( ${command.arguments.join(', ')} )<br/>"
-      commandArray.push(command.name)
+      if (command.arguments.size()>0) {
+        commands.push([ "name": command.name, "args": command.arguments ])
+      } else {
+        commands.push([ "name": command.name ])
+      }
       usesArguments = usesArguments || command.arguments.size()>0
     }
+    debug "commands array: ${commands}"
 
     // def capabilitiesString = "<b>capabilities:<b><br/>" +
     // smartDevice.capabilities.each { capability
@@ -247,19 +250,43 @@ def createDevices(smartDevices) {
     def messageSchema = [
       "type": "object",
       "title": "Command",
-      "properties": [
-        "smartDeviceId" : [
-          "type": "string",
-          "readOnly": true,
-          "default": "${smartDevice.id}"
-        ],
-        "command": [
-          "type": "string",
-          "enum": commandArray,
-          "default": ".value"
+      "properties": [:]
+    ]
+
+    commands.each { command ->
+      messageSchema."properties"."$command.name" = [
+        "type": "object",
+        "properties": [
+          "smartDeviceId": [
+            "type": "string",
+            "readOnly": true,
+            "default": "$smartDevice.id"
+          ],
+          "command": [
+            "type": "string",
+            "readOnly": true,
+            "default": "$command.name"
+          ],
+          "args": [:]
         ]
       ]
-    ]
+      debug "message schema: ${messageSchema}"
+
+      if (command.args) {
+        debug "$command.name has args"
+
+        messageSchema."properties"."$command.name"."properties"."args" = [
+          "type": "object",
+          "properties": [:]
+        ]
+
+        command.args.each { arg ->
+          messageSchema."properties"."$command.name"."properties"."args"."properties"."$arg" = [
+            "type": "$arg"
+          ]
+        }
+      }
+    }
 
     // if (commandArray.size()>1) {
     //   messageSchema."properties"."delay" = [
@@ -268,17 +295,19 @@ def createDevices(smartDevices) {
     //   ]
     // }
 
-    if (usesArguments) {
-      messageSchema."properties"."arguments" = [
-        "type": "array",
-        "description": commandInfo,
-        "readOnly": !usesArguments,
-        "items": [
-          "type": "string",
-          "title": "arg"
-        ]
-      ]
-    }
+    // if (usesArguments) {
+    //   messageSchema."properties"."arguments" = [
+    //     "type": "array",
+    //     "description": commandInfo,
+    //     "readOnly": !usesArguments,
+    //     "items": [
+    //       "type": "string",
+    //       "title": "arg"
+    //     ]
+    //   ]
+    // }
+
+    debug "UPDATED message schema: ${messageSchema.properties.setTrack}"
 
     def deviceProperties = [
       "messageSchema": messageSchema,
