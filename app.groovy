@@ -225,10 +225,9 @@ def devicesPage() {
 }
 
 def createDevices(smartDevices) {
-  smartDevices.each { smartDevice ->
 
-    def usesArguments = false
-    def commands = [[ "name": ".value" ],[ "name": ".state" ],[ "name": ".device" ],[ "name": ".events" ]]
+  smartDevices.each { smartDevice ->
+    def commands = [[ "name": "Value" ],[ "name": "State" ],[ "name": "Device" ],[ "name": "Events" ]]
 
     smartDevice.supportedCommands.each { command ->
       if (command.arguments.size()>0) {
@@ -236,32 +235,26 @@ def createDevices(smartDevices) {
       } else {
         commands.push([ "name": command.name ])
       }
-      usesArguments = usesArguments || command.arguments.size()>0
     }
-    debug "commands array: ${commands}"
-
-    // def capabilitiesString = "<b>capabilities:<b><br/>" +
-    // smartDevice.capabilities.each { capability
-    //   capabilitiesString += "<b>${capability.name}</b><br/>"
-    // }
 
     debug "creating device for ${smartDevice.id}"
 
     def messageSchema = [
       "type": "object",
       "title": "Command",
-      "properties": [:]
+      "properties": [
+        "smartDeviceId": [
+          "type": "string",
+          "readOnly": true,
+          "default": "$smartDevice.id"
+        ]
+      ]
     ]
 
     commands.each { command ->
       messageSchema."properties"."$command.name" = [
         "type": "object",
         "properties": [
-          "smartDeviceId": [
-            "type": "string",
-            "readOnly": true,
-            "default": "$smartDevice.id"
-          ],
           "command": [
             "type": "string",
             "readOnly": true,
@@ -270,44 +263,24 @@ def createDevices(smartDevices) {
           "args": [:]
         ]
       ]
-      debug "message schema: ${messageSchema}"
 
       if (command.args) {
-        debug "$command.name has args"
-
         messageSchema."properties"."$command.name"."properties"."args" = [
           "type": "object",
           "properties": [:]
         ]
 
         command.args.each { arg ->
+          def argLower = "$arg"
+          argLower = argLower.toLowerCase()
           messageSchema."properties"."$command.name"."properties"."args"."properties"."$arg" = [
-            "type": "$arg"
+            "type": "$argLower"
           ]
         }
       }
     }
 
-    // if (commandArray.size()>1) {
-    //   messageSchema."properties"."delay" = [
-    //     "type": "number",
-    //     "title": "delay (ms)"
-    //   ]
-    // }
-
-    // if (usesArguments) {
-    //   messageSchema."properties"."arguments" = [
-    //     "type": "array",
-    //     "description": commandInfo,
-    //     "readOnly": !usesArguments,
-    //     "items": [
-    //       "type": "string",
-    //       "title": "arg"
-    //     ]
-    //   ]
-    // }
-
-    debug "UPDATED message schema: ${messageSchema.properties.setTrack}"
+    debug "UPDATED message schema: ${messageSchema}"
 
     def deviceProperties = [
       "messageSchema": messageSchema,
