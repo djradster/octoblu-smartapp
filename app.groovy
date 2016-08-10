@@ -252,6 +252,12 @@ def createDevices(smartDevices) {
             "type": "string",
             "readOnly": true,
             "default": "$smartDevice.id"
+          ],
+          "command": [
+            "type": "string",
+            "readOnly": true,
+            "default": "$command.name",
+            "enum": ["$command.name"]
           ]
         ]
       ]
@@ -529,27 +535,27 @@ def receiveMessage() {
     settings."${capability}Capability".each { thing ->
       if (!foundDevice && thing.id == request.JSON.smartDeviceId) {
         foundDevice = true
-        if (!request.JSON.payload.command.startsWith(".")) {
-          def args = (request.JSON.payload.arguments ?: [])
-          thing."${request.JSON.payload.command}"(*args)
+        if (!request.JSON.command.endsWith(")")) {
+          def args = (request.JSON.arguments ?: [])
+          thing."${request.JSON.command}"(*args)
         } else {
-          debug "calling internal command ${request.JSON.payload.command}"
+          debug "calling internal command ${request.JSON.command}"
           def commandData = [:]
-          switch (request.JSON.payload.command) {
+          switch (request.JSON.command) {
             case "value(default)":
-              debug "got command .value"
+              debug "got command value(default)"
               thing.supportedAttributes.each { attribute ->
                 commandData[attribute.name] = thing.latestValue(attribute.name)
               }
               break
             case "state(default)":
-              debug "got command .state"
+              debug "got command state(default)"
               thing.supportedAttributes.each { attribute ->
                 commandData[attribute.name] = thing.latestState(attribute.name)?.value
               }
               break
             case "device(default)":
-              debug "got command .device"
+              debug "got command device(default)"
               commandData = [
                 "id" : thing.id,
                 "displayName" : thing.displayName,
@@ -561,7 +567,7 @@ def receiveMessage() {
               ]
               break
             case "events(default)":
-              debug "got command .events"
+              debug "got command events(default)"
               commandData.events = []
               thing.events().each { event ->
                 commandData.events.push(getEventData(event))
@@ -569,9 +575,9 @@ def receiveMessage() {
               break
             default:
               commandData.error = "unknown command"
-              debug "unknown command ${request.JSON.payload.command}"
+              debug "unknown command ${request.JSON.command}"
           }
-          commandData.command = request.JSON.payload.command
+          commandData.command = request.JSON.command
 
           def vendorDevice = state.vendorDevices[thing.id]
           debug "with vendorDevice ${vendorDevice} for ${groovy.json.JsonOutput.toJson(commandData)}"
