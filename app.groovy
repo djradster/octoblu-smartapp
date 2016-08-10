@@ -227,7 +227,7 @@ def devicesPage() {
 def createDevices(smartDevices) {
 
   smartDevices.each { smartDevice ->
-    def commands = [[ "name": "Value" ],[ "name": "State" ],[ "name": "Device" ],[ "name": "Events" ]]
+    def commands = [[ "name": "value(default)" ],[ "name": "state(default)" ],[ "name": "device(default)" ],[ "name": "events(default)" ]]
 
     smartDevice.supportedCommands.each { command ->
       if (command.arguments.size()>0) {
@@ -240,40 +240,33 @@ def createDevices(smartDevices) {
     debug "creating device for ${smartDevice.id}"
 
     def messageSchema = [
-      "type": "object",
-      "title": "Command",
-      "properties": [
-        "smartDeviceId": [
-          "type": "string",
-          "readOnly": true,
-          "default": "$smartDevice.id"
-        ]
-      ]
+      "version": "2.0.0",
+      "message": [:]
     ]
 
     commands.each { command ->
-      messageSchema."properties"."$command.name" = [
+      messageSchema."message"."$command.name" = [
         "type": "object",
         "properties": [
-          "command": [
+          "smartDeviceId": [
             "type": "string",
             "readOnly": true,
-            "default": "$command.name"
-          ],
-          "args": [:]
+            "default": "$smartDevice.id"
+          ]
         ]
       ]
 
       if (command.args) {
-        messageSchema."properties"."$command.name"."properties"."args" = [
+        messageSchema."message"."$command.name"."properties"."args" = [
           "type": "object",
+          "title": "Arguments",
           "properties": [:]
         ]
 
         command.args.each { arg ->
           def argLower = "$arg"
           argLower = argLower.toLowerCase()
-          messageSchema."properties"."$command.name"."properties"."args"."properties"."$arg" = [
+          messageSchema."message"."$command.name"."properties"."args"."properties"."$arg" = [
             "type": "$argLower"
           ]
         }
@@ -283,7 +276,7 @@ def createDevices(smartDevices) {
     debug "UPDATED message schema: ${messageSchema}"
 
     def deviceProperties = [
-      "messageSchema": messageSchema,
+      "schemas": messageSchema,
       "needsSetup": false,
       "online": true,
       "name": "${smartDevice.displayName}",
@@ -534,7 +527,7 @@ def receiveMessage() {
   def foundDevice = false
   selectedCapabilities.each{ capability ->
     settings."${capability}Capability".each { thing ->
-      if (!foundDevice && thing.id == request.JSON.payload.smartDeviceId) {
+      if (!foundDevice && thing.id == request.JSON.smartDeviceId) {
         foundDevice = true
         if (!request.JSON.payload.command.startsWith(".")) {
           def args = (request.JSON.payload.arguments ?: [])
@@ -543,19 +536,19 @@ def receiveMessage() {
           debug "calling internal command ${request.JSON.payload.command}"
           def commandData = [:]
           switch (request.JSON.payload.command) {
-            case ".value":
+            case "value(default)":
               debug "got command .value"
               thing.supportedAttributes.each { attribute ->
                 commandData[attribute.name] = thing.latestValue(attribute.name)
               }
               break
-            case ".state":
+            case "state(default)":
               debug "got command .state"
               thing.supportedAttributes.each { attribute ->
                 commandData[attribute.name] = thing.latestState(attribute.name)?.value
               }
               break
-            case ".device":
+            case "device(default)":
               debug "got command .device"
               commandData = [
                 "id" : thing.id,
@@ -567,7 +560,7 @@ def receiveMessage() {
                 "supportedCommands" : thing.supportedCommands.collect{ command -> return ["name" : command.name, "arguments" : command.arguments ] }
               ]
               break
-            case ".events":
+            case "events(default)":
               debug "got command .events"
               commandData.events = []
               thing.events().each { event ->
