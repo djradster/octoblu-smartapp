@@ -272,7 +272,7 @@ def createDevices(smartDevices) {
         command.args.each { arg ->
           def argLower = "$arg"
           argLower = argLower.toLowerCase()
-          messageSchema."message"."$command.name"."properties"."args"."properties"."$arg" = [
+          messageSchema."message"."$command.name"."properties"."args"."properties"."$argLower" = [
             "type": "$argLower"
           ]
         }
@@ -535,8 +535,15 @@ def receiveMessage() {
     settings."${capability}Capability".each { thing ->
       if (!foundDevice && thing.id == request.JSON.smartDeviceId) {
         foundDevice = true
-        if (!request.JSON.command.endsWith(")")) {
-          def args = (request.JSON.arguments ?: [])
+        if (!request.JSON.command.endsWith("(default)")) {
+          def args = []
+          if (request.JSON.args) {
+            request.JSON.args.each { k, v ->
+              args.push(v)
+            }
+          }
+
+          debug "command being sent: ${request.JSON.command}\targs to be sent: ${args}"
           thing."${request.JSON.command}"(*args)
         } else {
           debug "calling internal command ${request.JSON.command}"
