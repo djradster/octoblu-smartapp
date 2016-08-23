@@ -1,7 +1,7 @@
 /**
 The MIT License (MIT)
 
-Copyright (c) 2015 Octoblu
+Copyright (c) 2016 Octoblu
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -227,7 +227,7 @@ def devicesPage() {
 def createDevices(smartDevices) {
 
   smartDevices.each { smartDevice ->
-    def commands = [[ "name": "value(default)" ],[ "name": "state(default)" ],[ "name": "device(default)" ],[ "name": "events(default)" ]]
+    def commands = [[ "name": "* get value" ],[ "name": "* get state" ],[ "name": "* get device" ],[ "name": "* get events" ]]
 
     smartDevice.supportedCommands.each { command ->
       if (command.arguments.size()>0) {
@@ -239,31 +239,37 @@ def createDevices(smartDevices) {
 
     debug "creating device for ${smartDevice.id}"
 
-    def messageSchema = [
+    def schemas = [
       "version": "2.0.0",
       "message": [:]
     ]
 
     commands.each { command ->
-      messageSchema."message"."$command.name" = [
+      schemas."message"."$command.name" = [
         "type": "object",
         "properties": [
           "smartDeviceId": [
             "type": "string",
             "readOnly": true,
-            "default": "$smartDevice.id"
+            "default": "$smartDevice.id",
+            "x-schema-form": [
+            	"condition": "false"
+            ]
           ],
           "command": [
             "type": "string",
             "readOnly": true,
             "default": "$command.name",
-            "enum": ["$command.name"]
+            "enum": ["$command.name"],
+            "x-schema-form": [
+            	"condition": "false"
+            ]
           ]
         ]
       ]
 
       if (command.args) {
-        messageSchema."message"."$command.name"."properties"."args" = [
+        schemas."message"."$command.name"."properties"."args" = [
           "type": "object",
           "title": "Arguments",
           "properties": [:]
@@ -272,17 +278,17 @@ def createDevices(smartDevices) {
         command.args.each { arg ->
           def argLower = "$arg"
           argLower = argLower.toLowerCase()
-          messageSchema."message"."$command.name"."properties"."args"."properties"."$argLower" = [
+          schemas."message"."$command.name"."properties"."args"."properties"."$argLower" = [
             "type": "$argLower"
           ]
         }
       }
     }
 
-    debug "UPDATED message schema: ${messageSchema}"
+    debug "UPDATED message schema: ${schemas}"
 
     def deviceProperties = [
-      "schemas": messageSchema,
+      "schemas": schemas,
       "needsSetup": false,
       "online": true,
       "name": "${smartDevice.displayName}",
@@ -535,7 +541,7 @@ def receiveMessage() {
     settings."${capability}Capability".each { thing ->
       if (!foundDevice && thing.id == request.JSON.smartDeviceId) {
         foundDevice = true
-        if (!request.JSON.command.endsWith("(default)")) {
+        if (!request.JSON.command.startsWith("* get ")) {
           def args = []
           if (request.JSON.args) {
             request.JSON.args.each { k, v ->
@@ -549,20 +555,20 @@ def receiveMessage() {
           debug "calling internal command ${request.JSON.command}"
           def commandData = [:]
           switch (request.JSON.command) {
-            case "value(default)":
-              debug "got command value(default)"
+            case "* get value":
+              debug "got command value"
               thing.supportedAttributes.each { attribute ->
                 commandData[attribute.name] = thing.latestValue(attribute.name)
               }
               break
-            case "state(default)":
-              debug "got command state(default)"
+            case "* get state":
+              debug "got command state"
               thing.supportedAttributes.each { attribute ->
                 commandData[attribute.name] = thing.latestState(attribute.name)?.value
               }
               break
-            case "device(default)":
-              debug "got command device(default)"
+            case "* get device":
+              debug "got command device"
               commandData = [
                 "id" : thing.id,
                 "displayName" : thing.displayName,
@@ -573,8 +579,8 @@ def receiveMessage() {
                 "supportedCommands" : thing.supportedCommands.collect{ command -> return ["name" : command.name, "arguments" : command.arguments ] }
               ]
               break
-            case "events(default)":
-              debug "got command events(default)"
+            case "* get events":
+              debug "got command events"
               commandData.events = []
               thing.events().each { event ->
                 commandData.events.push(getEventData(event))
@@ -593,6 +599,7 @@ def receiveMessage() {
             uri: apiUrl() + "messages",
             headers: ["meshblu_auth_uuid": vendorDevice.uuid, "meshblu_auth_token": vendorDevice.token],
             body: groovy.json.JsonOutput.toJson([ "devices" : "*", "payload" : commandData ]) ]
+          ]
 
           debug "posting params ${postParams}"
 
