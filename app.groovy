@@ -278,9 +278,23 @@ def createDevices(smartDevices) {
         command.args.each { arg ->
           def argLower = "$arg"
           argLower = argLower.toLowerCase()
-          schemas."message"."$command.name"."properties"."args"."properties"."$argLower" = [
-            "type": "$argLower"
-          ]
+          if (argLower == "color_map") {
+            schemas."message"."$command.name"."properties"."args"."properties"."$argLower" = [
+              "type": "object",
+              "properties": [
+                "hex": [
+                  "type": "string"
+                ],
+                "level": [
+                  "type": "number"
+                ]
+              ]
+            ]
+          } else {
+            schemas."message"."$command.name"."properties"."args"."properties"."$argLower" = [
+              "type": "$argLower"
+            ]
+          }
         }
       }
     }
@@ -598,7 +612,7 @@ def receiveMessage() {
           def postParams = [
             uri: apiUrl() + "messages",
             headers: ["meshblu_auth_uuid": vendorDevice.uuid, "meshblu_auth_token": vendorDevice.token],
-            body: groovy.json.JsonOutput.toJson([ "devices" : "*", "payload" : commandData ]) ]
+            body: groovy.json.JsonOutput.toJson([ "devices" : "*", "payload" : commandData ])
           ]
 
           debug "posting params ${postParams}"
